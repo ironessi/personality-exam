@@ -1,0 +1,30 @@
+# Copy this file to manifest/config/payment.yaml before enabling payments.
+
+channels:
+  alipay:
+    icon: "alipay"
+    enabled: false
+  wechat:
+    icon: "wechat"
+    enabled: false
+
+alipay:
+  app_id: "YOUR_ALIPAY_APP_ID"
+  private_key: "YOUR_ALIPAY_RSA2_PRIVATE_KEY"
+  app_cert_path: "certs/alipay/appCertPublicKey_YOUR_APP_ID.crt"
+  alipay_root_cert_path: "certs/alipay/alipayRootCert.crt"
+  alipay_public_cert_path: "certs/alipay/alipayCertPublicKey_RSA2.crt"
+  alipay_public_key: ""
+  encrypt_key: ""
+  notify_url: "https://example.com/api/v1/payment/notify/alipay"
+  return_url: "https://example.com/#/result/"
+  is_prod: false
+
+wechat:
+  app_id: "YOUR_WECHAT_APP_ID"
+  mch_id: "YOUR_WECHAT_MCH_ID"
+  mch_v3_key: "YOUR_WECHAT_API_V3_KEY"
+  key_path: "certs/wechat/apiclient_key.pem"
+  cert_path: "certs/wechat/apiclient_cert.pem"
+  serial_no: "YOUR_WECHAT_CERT_SERIAL_NO"
+  notify_url: "https://example.com/api/v1/payment/notify/wechat"

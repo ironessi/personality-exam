@@ -1,0 +1,53 @@
+# Copy this file to config/config.yaml for local development.
+# Replace every placeholder before running the service.
+
+database:
+  default:
+    type: "mysql"
+    host: "127.0.0.1"
+    port: 3306
+    user: "YOUR_DATABASE_USER"
+    pass: "YOUR_DATABASE_PASSWORD"
+    name: "YOUR_DATABASE_NAME"
+    charset: "utf8mb4"
+    debug: true
+    parseTime: true
+    loc: "Local"
+
+server:
+  address: "0.0.0.0:8000"
+  name: "PersonalityTest"
+  readTimeout: "60s"
+  writeTimeout: "60s"
+  idleTimeout: "60s"
+  cors:
+    AllowDomain:
+      - "http://localhost:5173"
+      - "http://127.0.0.1:5173"
+    AllowMethods: "GET,POST,PUT,DELETE,OPTIONS,PATCH"
+    AllowHeaders: "Origin,Content-Type,Accept,Authorization,X-Requested-With,X-CSRF-Token"
+    AllowCredentials: "true"
+    MaxAge: 3600
+
+logger:
+  path: "logs"
+  level: "all"
+  stdout: true
+  stderr: true
+
+system:
+  errorStack: true
+  errorLog: true
+
+redis:
+  default:
+    address: "127.0.0.1:6379"
+    db: 0
+    pass: "YOUR_REDIS_PASSWORD"
+
+sms:
+  accessKeyId: "YOUR_ALIYUN_ACCESS_KEY_ID"
+  accessKeySecret: "YOUR_ALIYUN_ACCESS_KEY_SECRET"
+  endpoint: "dypnsapi.aliyuncs.com"
+  signName: "YOUR_SMS_SIGN_NAME"
+  templateCode: "YOUR_SMS_TEMPLATE_CODE"
