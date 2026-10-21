@@ -103,3 +103,66 @@ class TestParseLlmJson:
 
     def test_prose_around_object(self):
         assert _parse_llm_json('好的，结果如下：{"a": 1} 希望有帮助') == {"a": 1}
+
+
+class TestFitQuote:
+    """引文裁剪：超长引文曾让整次增强 500（suggestion 侧没有 try）。"""
+
+    def test_short_quote_untouched(self):
+        from app.rag.synthesizer import _fit_quote
+
+        assert _fit_quote("短句。") == "短句。"
+
+    def test_long_quote_cut_at_sentence_end(self):
+        from app.rag.synthesizer import _fit_quote
+
+        quote = "第一句讲清楚一件事。" + "第二句很长很长" * 12
+        got = _fit_quote(quote)
+        assert got == "第一句讲清楚一件事。"
+
+    def test_long_quote_without_boundary_is_dropped(self):
+        """找不到句末标点时宁可丢掉，也不硬切出半句冒充原文。"""
+        from app.rag.synthesizer import _fit_quote
+
+        assert _fit_quote("没有任何标点" * 20) is None
+
+    def test_empty_quote(self):
+        from app.rag.synthesizer import _fit_quote
+
+        assert _fit_quote(None) is None
+        assert _fit_quote("   ") is None
+
+    def test_overlong_suggestion_does_not_break_generation(self):
+        """一条坏建议不该拖垮整次生成：它自己失去引文（随后被验证器丢弃），
+        其余建议必须原样保留。"""
+        from app.rag.synthesizer import _to_enhance_data
+
+        payload = {
+            "enhanced_text": "总结",
+            "sections": [{"title": "节", "content": "内容"}],
+            "suggestions": [
+                {"text": "好建议", "basis": "依据一", "chunk_id": "c1", "evidence_quote": "原文一句。"},
+                {"text": "坏建议", "basis": "依据二", "chunk_id": "c1",
+                 "evidence_quote": "没有任何标点" * 20},
+            ],
+            "citations": [],
+        }
+        data = _to_enhance_data(_req([0.5]), payload, "m", 1, 1, 1)
+        got = {s.text: s.evidence_quote for s in data.suggestions}
+        assert got["好建议"] == "原文一句。"
+        assert got["坏建议"] is None, "无句末标点的超长引文应被丢掉（随后由验证器剔除该建议）"
+
+    def test_overlong_citation_is_dropped_not_fatal(self):
+        from app.rag.synthesizer import _to_enhance_data
+
+        payload = {
+            "enhanced_text": "总结",
+            "sections": [{"title": "节", "content": "内容"}],
+            "suggestions": [],
+            "citations": [
+                {"claim": "结论", "source": "s.md", "chunk_id": "c1",
+                 "evidence_quote": "没有任何标点" * 20, "section": 0},
+            ],
+        }
+        data = _to_enhance_data(_req([0.5]), payload, "m", 1, 1, 1)
+        assert data.citations == [] or data.citations[0].evidence_quote is None

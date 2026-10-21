@@ -201,6 +201,36 @@ def _parse_llm_json(raw: str) -> dict:
         raise
 
 
+_MAX_QUOTE_CHARS = 64  # 与 Citation.evidence_quote / Suggestion.evidence_quote 的 max_length 一致
+_QUOTE_BOUNDARIES = "。！？；…"
+
+
+def _fit_quote(raw: object) -> str | None:
+    """把模型给的引文裁到契约允许的长度，保留完整句子。
+
+    为什么必须裁：``evidence_quote`` 的 ``max_length=64`` 是硬约束，超长会抛
+    ``ValidationError``。citation 那边异常被吞掉（只是少一条），suggestion 那边
+    原先没有 try ——**一条 70 字的引文能让整次增强 500**。实测踩过：
+    ``scl90-mild`` 档案直接抛 ``string_too_long``。
+
+    剪裁策略：只在句末标点处切，宁可丢掉这条引文也不做硬切——硬切出来的半句
+    既过不了语义验证，又容易被误认为原文完整表述。找不到句末标点就返回 None，
+    调用方按「没有引文」处理（最终会被验证器丢弃）。
+    """
+    quote = str(raw or "").strip()
+    if not quote:
+        return None
+    if len(quote) <= _MAX_QUOTE_CHARS:
+        return quote
+
+    head = quote[:_MAX_QUOTE_CHARS]
+    cut = max(head.rfind(ch) for ch in _QUOTE_BOUNDARIES)
+    if cut <= 0:
+        logger.warning("引文超过 %d 字且找不到句末标点，丢弃：%s…", _MAX_QUOTE_CHARS, quote[:40])
+        return None
+    return head[: cut + 1]
+
+
 def _clean_citation(c: dict, n_sections: int) -> Citation | None:
     """把模型产出的一条 citation 转成 ``Citation``，过敏感词过滤器。
 
@@ -228,12 +258,39 @@ def _clean_citation(c: dict, n_sections: int) -> Citation | None:
             claim=claim,
             source=str(c.get("source") or ""),
             chunk_id=str(c.get("chunk_id") or ""),
-            evidence_quote=(c.get("evidence_quote") or None),
+            evidence_quote=_fit_quote(c.get("evidence_quote")),
             section=section,
         )
         return cit
     except Exception as exc:  # noqa: BLE001 —— 单条损坏，丢弃即可
         logger.warning("丢弃一条坏 citation：%s", exc)
+        return None
+
+
+def _clean_suggestion(s: dict) -> Suggestion | None:
+    """把一条建议转成 ``Suggestion``；不合格返回 None。
+
+    必须逐条 try：建议是列表里的独立元素，一条超长引文/一个坏字段不该让整次
+    增强失败。此前这里是列表推导式里直接构造，``max_length`` 一超就 500。
+    """
+    try:
+        text = str(s.get("text") or "").strip()
+        basis = str(s.get("basis") or "").strip()
+        if not text or not basis:
+            return None
+        # 建议文本与依据都要过敏感词过滤：原先只过滤 citations，
+        # 「建议停用抗抑郁药」这类句子可以原样出现在建议里。
+        if not is_claim_safe(text) or not is_claim_safe(basis):
+            logger.warning("敏感词过滤器拦截 suggestion：%s", text[:80])
+            return None
+        return Suggestion(
+            text=text,
+            basis=basis,
+            chunk_id=str(s.get("chunk_id") or ""),
+            evidence_quote=_fit_quote(s.get("evidence_quote")),
+        )
+    except Exception as exc:  # noqa: BLE001 —— 单条损坏，丢弃即可
+        logger.warning("丢弃一条坏 suggestion：%s", exc)
         return None
 
 
@@ -254,16 +311,9 @@ def _to_enhance_data(
     # 句子可以原样出现在 suggestions 里发给用户（is_claim_safe 的给药规则不做
     # 否定豁免，所以「不建议服用」同样会被拦下——那是刻意的）。
     suggestions = [
-        Suggestion(
-            text=str(s.get("text") or ""),
-            basis=str(s.get("basis") or ""),
-            chunk_id=str(s.get("chunk_id") or ""),
-            evidence_quote=(s.get("evidence_quote") or None),
-        )
+        sugg
         for s in (payload.get("suggestions") or [])
-        if isinstance(s, dict)
-        and is_claim_safe(str(s.get("text") or ""))
-        and is_claim_safe(str(s.get("basis") or ""))
+        if isinstance(s, dict) and (sugg := _clean_suggestion(s)) is not None
     ]
     citations = [
         cit
