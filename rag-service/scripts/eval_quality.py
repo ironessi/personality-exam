@@ -105,8 +105,22 @@ async def run_once(raw: dict, dry_run: bool) -> dict:
     passed, details = verify_citations(data.citations, chunks_by_id)
     sugg_passed, sugg_details = verify_suggestions(data.suggestions, chunks_by_id)
 
+    # 失败原因要打出来：只报一个通过率无法区分「模型没按抽取式写 claim」
+    # 与「NLI 判不蕴含」，而这两者的修法完全不同。
+    failures = [
+        {"kind": "citation", "claim": d.claim, "reason": d.reason}
+        for d in details
+        if not d.passed_stage1 or d.passed_stage2 is False
+    ]
+    failures += [
+        {"kind": "suggestion", "claim": d.claim, "reason": d.reason}
+        for d in sugg_details
+        if not d.passed_stage1 or d.passed_stage2 is False
+    ]
+
     return {
         "sections": len(data.sections),
+        "failures": failures,
         "citations_total": len(details),
         "citations_passed": len(passed),
         "suggestions_total": len(sugg_details),
@@ -138,6 +152,8 @@ async def main_async(args) -> int:
                 print(f"✗ {name} 第 {i + 1} 轮抛异常：{exc}")
                 continue
             r["profile"] = name
+            for f in r.get("failures") or []:
+                print(f"    · 丢弃 {f['kind']}：「{f['claim'][:30]}」→ {f['reason']}")
             r["round"] = i + 1
             rows.append(r)
             if args.dry_run:

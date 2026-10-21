@@ -296,20 +296,20 @@ def test_enhance_async_drops_suggestions_without_evidence(monkeypatch):
             suggestions=[
                 Suggestion(
                     text="在需要核对细节时建立检查清单。",
-                    basis="直觉倾向的人更容易被模式与可能性吸引",
+                    basis="更容易被模式、关联、可能性吸引",  # 引文的连续片段
                     chunk_id="typology_00001",
                     evidence_quote=quote,
                 ),
                 Suggestion(
                     text="每天冥想二十分钟。",
-                    basis="这句话是模型编的",
+                    basis="这句话是模型编的",  # 不在引文里 → 必须被丢弃
                     chunk_id="typology_00001",
                     evidence_quote="原文里根本没有这一句。",
                 ),
             ],
             citations=[
                 Citation(
-                    claim="直觉倾向的人更容易被模式与可能性吸引",
+                    claim="更容易被模式、关联、可能性吸引",  # 必须是引文的连续片段
                     source="16型人格类型详解.md",
                     chunk_id="typology_00001",
                     evidence_quote=quote,

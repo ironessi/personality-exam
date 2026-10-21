@@ -15,6 +15,11 @@
 全/半角标点后比较。生成侧被强制为每条 claim 附 ``evidence_quote``（≤60 字逐字
 复制）+ ``chunk_id``。这层能干掉编造引文、拼凑引文与 chunk_id 幻觉。
 
+**Stage 1.5 抽取式校验**
+``claim`` 必须是 ``evidence_quote`` 的连续原文片段（只允许删字）。这条是 2026-10-21
+补的：生成式 claim 的实测 ``support_precision`` 只有 0.50~0.75，而 NLI 对同义改写
+几乎一律判 neutral；改成抽取式后「claim 比引文多说」在结构上不可能发生。
+
 **Stage 2 语义蕴含**
 本地 NLI 交叉编码器判断 ``evidence_quote ⊨ claim``。用
 ``IDEA-CCNL/Erlangshen-Roberta-110M-NLI``（中文 110M）——
@@ -114,13 +119,32 @@ def normalize_for_substring(text: str) -> str:
     return out
 
 
+_PUNCT_STRIP = {ord(ch): None for ch in "，。；：！？（）「」『』、·—…,.!?;:()[]\"'“”‘’《》<>"}
+
+
+def _strip_punct(text: str) -> str:
+    """去掉标点只留字，用于「只差一个标点」的容错。
+
+    为什么需要：实测被丢弃的引文里有一半是**只差标点**（模型把「，」写成「、」，
+    或漏掉句末句号），而引文内容与原文一字不差。这种差异不该判成编造——
+    它既不改变含义，也不是模型在自由发挥。
+    """
+    return text.translate(_PUNCT_STRIP)
+
+
 def stage1_substring_ok(evidence_quote: str, chunk_text: str) -> bool:
-    """``evidence_quote`` 是否为 ``chunk_text`` 的规范化字面子串。"""
+    """``evidence_quote`` 是否为 ``chunk_text`` 的规范化字面子串。
+
+    比较两遍：先按「全半角标点归一 + 去空白」比，再按「连标点一起去掉」比。
+    后者放宽的只是标点，**字仍然必须逐字相同**，所以不会放过改写。
+    """
     q = normalize_for_substring(evidence_quote)
     c = normalize_for_substring(chunk_text)
     if not q:
         return False  # 空引文不能算通过
-    return q in c
+    if q in c:
+        return True
+    return _strip_punct(q) in _strip_punct(c)
 
 
 # ── Stage 2：NLI 语义蕴含（懒加载）──────────────────────────
@@ -270,6 +294,25 @@ def stage2_status() -> tuple[bool, str | None]:
 # ── 主入口 ──────────────────────────────────────────────────
 
 
+def claim_extracted_from_quote(claim: str, evidence_quote: str | None) -> bool:
+    """``claim`` 是否是 ``evidence_quote`` 的连续原文片段（Stage 1.5）。
+
+    为什么加这一级：Stage 2 的 NLI 模型只认「短且被包含」，对同义改写几乎一律
+    判 neutral（实测同义句 entailment 仅 0.086）。而让模型自由改写再靠 NLI 兜底，
+    实测 ``support_precision`` 只有 0.50~0.75，远达不到 ADR-0003 的 0.95。
+    改成抽取式后，「claim 说的比引文多」在结构上就不可能发生——这是把质量红线
+    从「靠模型自觉」换成「靠机械校验」。
+
+    规范化与 Stage 1 相同（去空白、全半角标点归一），否则模型复制时多一个空格
+    就会被误杀。
+    """
+    c = normalize_for_substring(claim or "")
+    q = normalize_for_substring(evidence_quote or "")
+    if not c or not q:
+        return False
+    return c in q
+
+
 def _verify_pair(
     claim: str,
     chunk_id: str,
@@ -300,6 +343,15 @@ def _verify_pair(
             passed_stage1=False,
             passed_stage2=None,
             reason="evidence_quote 不是所引块原文的字面子串",
+        )
+
+    if not claim_extracted_from_quote(claim, evidence_quote):
+        return False, VerificationResult(
+            claim=claim,
+            chunk_id=chunk_id,
+            passed_stage1=False,
+            passed_stage2=None,
+            reason="claim 不是 evidence_quote 的连续原文片段（抽取式要求）",
         )
 
     ok2: bool | None = None

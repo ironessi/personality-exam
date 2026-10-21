@@ -62,23 +62,27 @@ _SYSTEM_PROMPT = """你是一名心理测评报告撰写助手。你的任务是
 2. 每条结论（claim）都必须附证据引用：`evidence_quote` 是所给知识块原文中的一句\
 **逐字复制**（不超过 60 字，覆盖完整的一句判断），`chunk_id` 是该块的编号。不得自己改写、概括或拼凑\
 引文——必须能从对应 chunk 里逐字找到。
-3. `claim` 必须**又短又稳**（不超过 25 字，一句话只说一件事），且是引文原句的\
-同义缩写：不得出现具体分数、「你」「你的」、得分档位，也不要加原文没有的因果、\
-程度或推论。个性化叙述放在 `enhanced_text` 和 `sections` 里，引用只负责「背书\
-那条知识」。
-   - 正确：claim=「外倾倾向的人更常从外部互动中获得能量」
-   - 错误：claim=「你的外倾维度得分 15 分，说明你更外向」——原文里没有分数
-   - 错误：claim=「判断倾向的人需要确定感，所以计划变动会带来不适」——\
-「所以」后面的因果是原文没有的，这种加长会被判成不支持
+3. `claim` 必须是 `evidence_quote` 里**原样截取的一段连续文字**（不超过 30 字）。\
+只允许「删掉不要的字」，**不允许改写、换同义词、补字、调换顺序**——系统会把\
+claim 与 evidence_quote 做字面包含校验，改一个词就会被判不通过并整条丢弃。\
+claim 里不要出现具体分数、「你」「你的」、得分档位。个性化叙述放在\
+`enhanced_text` 和 `sections` 里，引用只负责「背书那条知识」。
+   - 引文：「外倾倾向的人更常从外部互动中获得能量，独处太久反而容易烦躁。」
+   - 正确：claim=「外倾倾向的人更常从外部互动中获得能量」（是引文的连续片段）
+   - 错误：claim=「外倾的人靠社交充电」（改写，字面不在引文里）
+   - 错误：claim=「你的外倾维度得分 15 分，说明你更外向」（引文里没有分数）
 4. 引文必须真实支持该 claim：把 A 块的句子挂到 B 结论上是错的；claim 说的要比\
 引文多（比如引文只讲了倾向、claim 却推出诊断）同样是错的。
 5. 只输出 JSON，不要输出任何解释性文字、代码块围栏或前后缀。
 6. 不得给出服药、停药、调药等具体用药建议。
 7. `suggestions` 里的每一条也必须带出处：`basis` 是这条建议所依据的那句知识\
-（不超过 25 字，口径同 claim），`chunk_id` 与 `evidence_quote` 的规定与 citation\
-完全相同——引文逐字复制、且必须真支持 `basis`。**不许**只写「建议多运动」这类\
+（不超过 30 字，**同样必须是 `evidence_quote` 的连续原文片段**，口径同 claim），\
+`chunk_id` 与 `evidence_quote` 的规定与 citation 完全相同——引文逐字复制、\
+且 `basis` 必须能在引文里逐字找到。**不许**只写「建议多运动」这类\
 没有知识依据的通用建议；写不出来就少写几条。
 8. 描述维度/因子的强弱时，**只能使用结果里给定的「程度=…」原词**，不得自行升级或降级（给了「轻度偏向」就不能写「非常明显」「较为明显」）；「接近中间」的那一项不要描述成某种偏向。数值与叙述必须一致，**排序也要一致**——最明显的那一维不能被说成最温和的。
+9. 引用不要堆量：`citations` 总数**不超过 8 条**，优先引与本次得分关系最紧密的知识；\
+同一句话不要重复引用两次。
 
 输出 JSON 结构（严格按此，字段名不得增删）：
 {
@@ -413,7 +417,19 @@ async def synthesize(req: EnhanceRequest, chunks: list[RetrievedChunk]) -> Enhan
             "——检查 llm_thinking 是否为 disabled，或调大 llm_max_tokens。"
         )
 
-    payload = _parse_llm_json(content)
+    try:
+        payload = _parse_llm_json(content)
+    except json.JSONDecodeError as exc:
+        # JSON 坏了绝大多数情况是**输出被截断**（finish_reason="length"），
+        # 少数是模型擅自加了尾逗号。两种情况都需要原始响应尾部才能判定，
+        # 所以把 finish_reason 与末尾 200 字一起报出来，别只留一句
+        # "Expecting ',' delimiter" 让人猜。
+        raise RuntimeError(
+            f"DeepSeek 返回的 JSON 无法解析：{exc}"
+            f"（finish_reason={finish_reason}, completion_tokens={completion_tokens}, "
+            f"max_tokens={s.llm_max_tokens}）。"
+            f"响应末尾：…{content[-200:]!r}"
+        ) from exc
     if not isinstance(payload, dict):
         raise RuntimeError("LLM 输出不是 JSON 对象")
 

@@ -57,17 +57,15 @@ def test_similarity_threshold_would_misjudge_these():
     assert stage1_substring_ok("社交能让外向的人恢复精力", chunk) is False
 
 
-def test_stage2_catches_misattributed_but_verbatim_quote():
-    """抄对句子挂错结论：Stage 1 通过、Stage 2 必须否掉。
+def test_claim_must_be_extracted_from_quote():
+    """「抄对句子挂错结论」这类错误必须被结构挡住。
 
-    Stage 2 依赖 NLI 模型权重，测试环境可能未下载。这里关闭 run_stage2，
-    只断言 Stage 1 的「逐字但不蕴含」场景至少能被 Stage 1 分辨为「引文真实」——
-    真正的蕴含判定在标注样本对齐后由 stage2 覆盖（见 ADR-0003 遗留）。
+    2026-10-21 起 claim 改为抽取式（只能是引文的连续片段），所以「claim 与引文
+    相反」在生成阶段就不可能通过校验——这一级不依赖 NLI 权重，是确定性的。
     """
     chunk_text = "外向的人往往从社交互动中获取能量。"
-    # 引文逐字真实（Stage 1 过），但 claim 与之矛盾（挂错结论）
     citation = Citation(
-        claim="外向的人喜欢独处且回避社交",
+        claim="外向的人喜欢独处且回避社交",  # 与引文相反，且不是引文片段
         source="test.md",
         chunk_id="typology_00001",
         evidence_quote="从社交互动中获取能量",
@@ -75,13 +73,28 @@ def test_stage2_catches_misattributed_but_verbatim_quote():
     passed, details = verify_citations(
         [citation],
         {"typology_00001": chunk_text},
-        run_stage2=False,  # 测试环境无 NLI 权重
+        run_stage2=False,
     )
-    assert len(details) == 1
-    assert details[0].passed_stage1 is True
-    # run_stage2=False 时 Stage 2 未跑，verified 由「Stage1 过且 Stage2 非 False」判定为真
-    assert details[0].verified is True
-    assert len(passed) == 1
+    assert passed == []
+    assert details[0].passed_stage1 is False
+    assert "抽取式" in details[0].reason
+
+
+def test_verbatim_quote_from_wrong_chunk_is_rejected():
+    """引文逐字真实、但挂在别的 chunk 上：Stage 1 仍要拦住。"""
+    citation = Citation(
+        claim="从社交互动中获取能量",
+        source="test.md",
+        chunk_id="typology_00002",
+        evidence_quote="从社交互动中获取能量",
+    )
+    passed, details = verify_citations(
+        [citation],
+        {"typology_00002": "完全不同的另一段知识。"},
+        run_stage2=False,
+    )
+    assert passed == []
+    assert details[0].passed_stage1 is False
 
 
 def test_verify_citations_rejects_unknown_chunk_id():
@@ -237,7 +250,7 @@ class TestSuggestionVerification:
     def test_verified_suggestion_is_kept(self):
         from app.core.verifier import verify_suggestions
 
-        s = self._sugg("直觉倾向的人更容易被模式与可能性吸引", "偏直觉的人更容易被模式、关联、可能性吸引。")
+        s = self._sugg("更容易被模式、关联、可能性吸引", "偏直觉的人更容易被模式、关联、可能性吸引。")
         passed, details = verify_suggestions([s], {"typology_00001": self.CHUNK}, run_stage2=False)
         assert len(passed) == 1
         assert passed[0].verified is True
