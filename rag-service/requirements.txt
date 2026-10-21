@@ -1,0 +1,60 @@
+# ──────────────────────────────────────────────────────────────
+# rag-service 直接依赖（版本 = 开发机 /Users/iron/rag 实测已装版本）
+#
+# 安装：
+#   /Users/iron/rag/bin/python -m pip install -r requirements.txt
+#
+# 完整锁：/Users/iron/rag/bin/python -m pip freeze > requirements.lock.txt
+# ──────────────────────────────────────────────────────────────
+
+# ── Web 框架（主文档 §4 :181-183）────────────────────────────
+# ⚠️ fastapi 必须 >=0.115：0.99.1 的元数据是 pydantic<2.0.0，与本文件的
+#    pydantic 2.13.4 冲突，`import fastapi` 会报
+#    ImportError: cannot import name 'Undefined' from 'pydantic.fields'。
+#    starlette 随之必须 >=0.46（0.27.0 是 fastapi 0.99.1 的配套旧版）。
+fastapi==0.143.0
+starlette==1.7.0
+uvicorn[standard]==0.52.0
+pydantic==2.13.4
+pydantic-settings==2.14.2
+python-dotenv==1.2.2
+# multipart：/admin/reload 与将来可能的上传式入库
+python-multipart
+
+# ── 向量与本地模型 ────────────────────────────────────────────
+sentence-transformers==5.6.1
+torch==2.6.0
+numpy==2.4.6
+
+# ── 向量库 ───────────────────────────────────────────────────
+chromadb==1.5.9
+# RAG 检索栈（ADR-0009）。注意：只用它的检索能力，切分/查询改写/生成都不用它。
+# llama-index 元包会带进 20 余个无关集成（llms-openai / tools-* / readers-*），
+# 暂时保留——收敛依赖是独立议题，不要顺手删。
+llama-index==0.14.23
+llama-index-vector-stores-chroma==0.6.0
+
+# ── 检索与文本 ───────────────────────────────────────────────
+# app/rag/bm25.py 在模块级 import BM25Retriever，故这是**硬依赖**，不能因为
+# 默认后端是 jieba 就省掉：省掉的话 import app.rag.retriever 直接 ImportError。
+# 它底层是 bm25s（不是 rank-bm25），且会拉 numpy/scipy。
+llama-index-retrievers-bm25==0.8.0
+# 默认 BM25 后端（settings.bm25_backend="jieba"）用这两个。
+# 选 jieba 而非 LlamaIndex 汉字级后端的实测依据见 ADR-0009。
+rank-bm25==0.2.2
+jieba==0.42.1
+
+# ── LLM 调用与序列化 ─────────────────────────────────────────
+httpx==0.28.1
+orjson==3.10.18
+
+# ── 测试 ─────────────────────────────────────────────────────
+pytest
+pytest-asyncio
+
+# ──────────────────────────────────────────────────────────────
+# ADR-0003 的 Stage 2 语义蕴含需要 NLI 交叉编码器：
+#   IDEA-CCNL/Erlangshen-Roberta-110M-NLI（中文 110M，已定）
+# 它走 transformers，已由 sentence-transformers 传递依赖带进来，
+# 故此处不重复声明；模型权重在 P0-4 首次使用时下载。
+# ──────────────────────────────────────────────────────────────

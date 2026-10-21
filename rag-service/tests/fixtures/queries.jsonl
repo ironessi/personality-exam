@@ -1,0 +1,30 @@
+{"id": "q01", "query": "16型人格 MBTI 认知功能 类型动力学 解释", "domains": ["typology", "common"], "expect_any_of": ["认知功能", "类型"]}
+{"id": "q02", "query": "MBTI 维度 强度 偏好清晰度 边界分数 说明", "domains": ["typology", "common"], "expect_any_of": ["维度", "偏好"]}
+{"id": "q03", "query": "INTJ 类型 优势 盲点 人际互动 成长建议", "domains": ["typology", "common"], "expect_any_of": ["INTJ", "优势"]}
+{"id": "q04", "query": "DISC 四类型 行为风格 支配 影响 稳健 谨慎", "domains": ["typology", "common"], "expect_any_of": ["DISC", "行为"]}
+{"id": "q05", "query": "DISC 压力反应 冲突处理 说明", "domains": ["typology", "social", "common"], "expect_any_of": ["压力", "冲突"]}
+{"id": "q06", "query": "16型人格 重测信度 巴纳姆效应 标签化 测评局限", "domains": ["typology", "common"], "expect_any_of": ["信度", "巴纳姆", "标签"]}
+{"id": "q07", "query": "类型不是命运 人格类型 会不会改变", "domains": ["typology", "common"], "expect_any_of": ["类型", "改变"]}
+{"id": "q08", "query": "性别角色 双性化 男性化 女性化 量表 解释", "domains": ["typology", "common"], "expect_any_of": ["性别", "角色"]}
+{"id": "q09", "query": "SCL-90 躯体化 因子 得分偏高 说明什么", "domains": ["symptom", "common"], "expect_any_of": ["躯体化", "因子"]}
+{"id": "q10", "query": "SCL-90 总分 阳性项目数 描述性指标 不是诊断阈值", "domains": ["symptom", "common"], "expect_any_of": ["总分", "诊断"]}
+{"id": "q11", "query": "有轻生念头 该怎么办 紧急 求助", "domains": ["symptom", "common"], "expect_any_of": ["求助", "专业"]}
+{"id": "q12", "query": "抑郁 情绪低落 持续多久 需要就医", "domains": ["symptom", "common"], "expect_any_of": ["抑郁", "就医", "专业"]}
+{"id": "q13", "query": "焦虑 紧张 心慌 睡眠困扰 自助应对", "domains": ["symptom", "common"], "expect_any_of": ["焦虑", "睡眠"]}
+{"id": "q14", "query": "压力知觉 量表 分数高 代表什么", "domains": ["symptom", "common"], "expect_any_of": ["压力"]}
+{"id": "q15", "query": "强迫症状 反复检查 要不要看医生", "domains": ["symptom", "common"], "expect_any_of": ["强迫", "专业"]}
+{"id": "q16", "query": "EPQ 内外向 神经质 精神质 解释", "domains": ["trait", "common"], "expect_any_of": ["内外向", "神经质"]}
+{"id": "q17", "query": "自恋 人格 量表 高分 是不是自恋型人格障碍", "domains": ["trait", "common"], "expect_any_of": ["自恋", "人格"]}
+{"id": "q18", "query": "自我控制 量表 得分低 怎么提升", "domains": ["trait", "common"], "expect_any_of": ["自我控制"]}
+{"id": "q19", "query": "大五人格 特质 与 类型学 区别", "domains": ["trait", "common"], "expect_any_of": ["特质", "类型"]}
+{"id": "q20", "query": "高敏感 人格 特点 适应建议", "domains": ["trait", "common"], "expect_any_of": ["敏感"]}
+{"id": "q21", "query": "人际困扰 社交焦虑 量表 分数 解释", "domains": ["social", "common"], "expect_any_of": ["人际", "社交"]}
+{"id": "q22", "query": "孤独感 量表 得分高 怎么办", "domains": ["social", "common"], "expect_any_of": ["孤独"]}
+{"id": "q23", "query": "共情能力 量表 高低 说明什么", "domains": ["social", "common"], "expect_any_of": ["共情"]}
+{"id": "q24", "query": "服从性 实验 情境压力 会不会盲从", "domains": ["social", "common"], "expect_any_of": ["服从"]}
+{"id": "q25", "query": "社会地位 主观 量表 解释 不做阶序评判", "domains": ["social", "common"], "expect_any_of": ["社会地位"]}
+{"id": "q26", "query": "生活满意度 量表 分数低 是不是不幸福", "domains": ["wellbeing", "common"], "expect_any_of": ["满意度", "幸福"]}
+{"id": "q27", "query": "人生意义感 量表 解释", "domains": ["wellbeing", "common"], "expect_any_of": ["意义"]}
+{"id": "q28", "query": "积极情绪 消极情绪 情绪平衡 解释", "domains": ["wellbeing", "common"], "expect_any_of": ["情绪"]}
+{"id": "q29", "query": "自我效能感 量表 得分 提升 建议", "domains": ["wellbeing", "common"], "expect_any_of": ["效能"]}
+{"id": "q30", "query": "职业兴趣 霍兰德 六型 解释", "domains": ["career", "common"], "expect_any_of": ["职业", "兴趣"]}
