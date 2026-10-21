@@ -3,6 +3,7 @@ package evaluation
 import (
 	v1 "PersonalityTest/api/test_type/v1"
 	"fmt"
+	"sort"
 )
 
 // Factor 因子定义
@@ -71,6 +72,26 @@ var SCL90Factors = []Factor{
 		Items: []int{19, 44, 59, 60, 64, 66, 89},
 	},
 }
+
+// SCL90CrisisRules 危机信号题项（1 基题号）与其触发下限。
+//
+// 为什么要脱离总分与因子均值单独判定：两者都会把单个严重题项稀释掉。
+// 「有轻生念头」答“严重”、其余 89 题全答“没有”时，总分只有 94，
+// 会被总分分档判成「正常范围」；躯体化因子均值 (11×1+5)/12 ≈ 1.33
+// 也够不到 HighRiskFactors 的 2.0 门槛。结果是系统会告诉一个报告了
+// 自杀意念的人“你在正常范围内”——这类作答必须无条件升级处理。
+var SCL90CrisisRules = map[int]int{
+	58: 2, // 有轻生念头：答“很轻”及以上即触发
+	20: 4, // 感到生活无意义：答“偏重”及以上触发
+	26: 4, // 对未来绝望：答“偏重”及以上触发
+	75: 4, // 感到自己毫无价值：答“偏重”及以上触发
+}
+
+// SCL90CrisisLabel 危机信号在 high_risk_factors 中的标记名。
+const SCL90CrisisLabel = "危机信号（需立即评估）"
+
+// SCL90CrisisLevel 命中危机信号时覆盖 level 的取值。
+const SCL90CrisisLevel = "需立即评估"
 
 func getScore(answer string) int {
 	scoreMap := map[string]int{
@@ -221,6 +242,34 @@ func calculateDetailedResults(scores []int) SCL90TestResult {
 			result.Analysis += factor.Name + "(" + fmt.Sprintf("%.2f", factor.Score) + "分)、"
 		}
 		result.Analysis = result.Analysis[:len(result.Analysis)-1] + "，需要特别关注。"
+	}
+
+	// 危机信号单独判定，不受总分与因子均值稀释（见 SCL90CrisisRules 注释）。
+	// 这一段必须放在总分分档之后，因为它的结论要覆盖分档结论。
+	var crisisItems []int
+	for itemNum, floor := range SCL90CrisisRules {
+		if scores[itemNum-1] >= floor {
+			crisisItems = append(crisisItems, itemNum)
+		}
+	}
+	sort.Ints(crisisItems)
+
+	if len(crisisItems) > 0 {
+		result.NeedFurtherEval = true
+		result.HighRiskFactors = append(result.HighRiskFactors, Factor{Name: SCL90CrisisLabel})
+		result.Level = SCL90CrisisLevel
+		result.Title = "检测到危机信号，请立即寻求专业帮助"
+		result.Analysis = fmt.Sprintf(
+			"本次作答中有 %d 个题项达到危机信号标准（题号 %v）。"+
+				"这类情况不适合继续自行观察，请尽快联系精神科医生或注册心理师面谈评估；"+
+				"若出现自伤或自杀的念头、计划或行为，请立即联系当地急救与心理援助资源，"+
+				"或前往最近的正规医疗机构急诊。",
+			len(crisisItems), crisisItems)
+		result.Suggestions = append([]string{
+			"立即寻求专业帮助，不要等待",
+			"联系当地急救与心理援助资源，或前往最近的正规医疗机构急诊",
+			"让身边可信任的人知晓你的情况，尽量不要独处",
+		}, result.Suggestions...)
 	}
 
 	return result
