@@ -152,11 +152,14 @@ func (r *EnhanceResponse) Stored() map[string]interface{} {
 		"citations":     d.Citations,
 		"disclaimer":    r.Disclaimer,
 	}
+	// 取值必须与 Python 的 RagStatus 一致：pending / ready / degraded / failed
+	// （rag-service/app/api/schemas.py）。原先这里写的是 "ok"——那是 Go 侧自造的
+	// 第五个值，前端与运维脚本按枚举判断时会漏掉它，看起来像"没有增强结果"。
 	if len(d.Citations) == 0 {
 		// 一条引用都没过验证时，明确标注"无据"，不要让它看起来像有依据。
 		rag["status"] = "degraded"
 	} else {
-		rag["status"] = "ok"
+		rag["status"] = "ready"
 	}
 	return rag
 }

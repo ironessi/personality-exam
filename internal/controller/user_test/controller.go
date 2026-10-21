@@ -498,7 +498,15 @@ func (c *Controller) SubmitTestResult(ctx context.Context, req *SubmitTestResult
 	if pendingRAG != nil {
 		if ragMap := pendingRAG.TryInline(ctx); ragMap != nil {
 			resultMap["rag"] = ragMap
+			// 顶层镜像一份 rag_status：前端只看它就知道该不该轮询（§6.3）。
+			if status, ok := ragMap["status"].(string); ok {
+				resultMap["rag_status"] = status
+			}
 			ragAttached = true
+		} else {
+			// 没拿到同步结果 → 下面会入队。先落 pending，用户才知道"稍后会来"，
+			// 而不是以为这个测评根本不支持增强。
+			resultMap["rag_status"] = "pending"
 		}
 	}
 
@@ -526,6 +534,11 @@ func (c *Controller) SubmitTestResult(ctx context.Context, req *SubmitTestResult
 	if pendingRAG != nil && !ragAttached && recordID > 0 {
 		if enqueueErr := pendingRAG.Enqueue(ctx, recordID); enqueueErr != nil {
 			g.Log().Warningf(ctx, "RAG: 增强任务入队失败（不影响测评结果）: %v", enqueueErr)
+			// 队列不可达时结果永远不会来，把 pending 改成 failed，
+			// 否则前端会一直轮询一个不存在的任务。
+			if markErr := rag.MarkFailed(ctx, recordID); markErr != nil {
+				g.Log().Warningf(ctx, "RAG: 标记增强失败状态也失败: %v", markErr)
+			}
 		}
 	}
 

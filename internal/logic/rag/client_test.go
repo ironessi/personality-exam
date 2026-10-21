@@ -79,7 +79,8 @@ func TestClientEnhanceAndWhitelistStore(t *testing.T) {
 	if rag["enhanced_text"] == "" || rag["sections"] == nil || rag["citations"] == nil {
 		t.Errorf("落库结构缺业务字段: %v", rag)
 	}
-	if rag["status"] != "ok" {
+	// 历史值是 "ok"（Go 自造），2026-10-21 统一成 Python 枚举里的 "ready"。
+	if rag["status"] != "ready" {
 		t.Errorf("status = %v，有引用时期望 ok", rag["status"])
 	}
 

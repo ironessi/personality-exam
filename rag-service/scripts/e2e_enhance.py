@@ -247,7 +247,7 @@ def _audit_per_measure(req: EnhanceRequest, queries: list[str], namespaces: list
 
 async def run_case(name: str, dry_run: bool) -> bool:
     from app.core.config import get_settings
-    from app.core.verifier import verify_citations
+    from app.core.verifier import verify_citations, verify_suggestions
     from app.rag.query_builder import build_queries, retrieval_namespaces
     from app.rag.retriever import retrieve
 
@@ -306,7 +306,7 @@ async def run_case(name: str, dry_run: bool) -> bool:
         return True
 
     # ── 3. 生成 ──
-    from app.rag.synthesizer import synthesize
+    from app.rag.synthesizer import strength_band, synthesize
 
     settings = get_settings()
     if not settings.llm_enabled:
@@ -323,6 +323,21 @@ async def run_case(name: str, dry_run: bool) -> bool:
     if not data.enhanced_text.strip():
         print("✗ enhanced_text 为空——LLM 没按 JSON 结构返回")
         return False
+
+    # ── 3b. 叙述审计：强度叙述必须与 strength 一致 ──
+    # 自动判不了「这句话说得对不对」，但能把「数值 → 应有的程度词」和模型实际写的
+    # 文字并排打出来。历史问题：E=+0.33 / S=-0.67 被写成「外倾和思考倾向较为明显，
+    # 直觉和判断倾向相对温和」——把最强的一维说成最温和的，正好反了。
+    print("\n[3b] 叙述审计（数值 → 程度词 vs 模型原文）")
+    for m in req.measures:
+        if m.strength is None:
+            continue
+        print(f"    {m.label}: strength={m.strength:+.2f} → 应为「{strength_band(m.strength)}」")
+    print("\n  --- enhanced_text ---")
+    print("  " + data.enhanced_text.replace("\n", "\n  "))
+    for i, sec in enumerate(data.sections):
+        print(f"\n  --- sections[{i}] {sec.title} ---")
+        print("  " + sec.content.replace("\n", "\n  "))
 
     # ── 4. 两级引用验证 ──
     chunks_by_id = {c.chunk_id: c.text for c in chunks}
@@ -344,6 +359,24 @@ async def run_case(name: str, dry_run: bool) -> bool:
         print(f"✓ 字面命中率 {n1}/{len(details)} = {n1 / len(details):.0%}")
     else:
         print("⚠ LLM 未给出任何 citation（结构合法但溯源缺失）")
+
+    # ── 4b. 建议验证：basis 走同一套两级验证 ──
+    sugg_passed, sugg_details = verify_suggestions(data.suggestions, chunks_by_id)
+    s1 = sum(1 for d in sugg_details if d.passed_stage1)
+    print(f"\n[4b] 建议验证  共 {len(sugg_details)} 条  Stage1 过 {s1}  保留 {len(sugg_passed)}")
+    for d in sugg_details:
+        mark = "✓" if d.verified else "✗"
+        print(f"    {mark} [{d.chunk_id or '-'}] {d.claim[:34]}")
+        if not d.verified:
+            print(f"        reason={d.reason}")
+    if sugg_details:
+        rate = s1 / len(sugg_details)
+        print(f"  建议依据字面命中率 {s1}/{len(sugg_details)} = {rate:.0%}")
+        if s1 == 0:
+            print("✗ 没有任何一条建议的依据能在原文里找到——prompt 约束 7 失效")
+            return False
+    # 与路由一致：未通过的建议会被丢弃，只留通过的
+    data.suggestions = sugg_passed
 
     print(f"\n{name.upper()} 通过。")
     return True

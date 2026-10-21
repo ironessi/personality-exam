@@ -270,6 +270,52 @@ def stage2_status() -> tuple[bool, str | None]:
 # ── 主入口 ──────────────────────────────────────────────────
 
 
+def _verify_pair(
+    claim: str,
+    chunk_id: str,
+    evidence_quote: str | None,
+    chunks_by_id: dict,
+    *,
+    run_stage2: bool,
+) -> tuple[bool, VerificationResult]:
+    """对「一条结论 + 一条引文」跑两级验证，返回 ``(是否通过, 明细)``。
+
+    抽出来是因为 ``citations`` 和 ``suggestions`` 走的是同一套判定：建议的
+    ``basis`` 是它引用的那条知识，``evidence_quote`` 是支撑该知识的原文。
+    """
+    chunk_text = chunks_by_id.get(chunk_id, "")
+    if not chunk_text:
+        return False, VerificationResult(
+            claim=claim,
+            chunk_id=chunk_id,
+            passed_stage1=False,
+            passed_stage2=None,
+            reason="chunk_id 不存在（幻觉或已删）",
+        )
+
+    if not stage1_substring_ok(evidence_quote or "", chunk_text):
+        return False, VerificationResult(
+            claim=claim,
+            chunk_id=chunk_id,
+            passed_stage1=False,
+            passed_stage2=None,
+            reason="evidence_quote 不是所引块原文的字面子串",
+        )
+
+    ok2: bool | None = None
+    if run_stage2:
+        ok2 = _nli_entails(premise=evidence_quote or "", hypothesis=claim)
+
+    verified = ok2 is not False  # Stage 1 已过；Stage 2 未启用(None)视为通过
+    return verified, VerificationResult(
+        claim=claim,
+        chunk_id=chunk_id,
+        passed_stage1=True,
+        passed_stage2=ok2,
+        reason=("通过" if verified else "evidence_quote 不支持该 claim（语义蕴含不成立）"),
+    )
+
+
 def verify_citations(
     citations: list,
     chunks_by_id: dict,
@@ -291,52 +337,46 @@ def verify_citations(
     details: list[VerificationResult] = []
 
     for c in citations:
-        chunk_text = chunks_by_id.get(c.chunk_id, "")
-        if not chunk_text:
-            details.append(
-                VerificationResult(
-                    claim=c.claim,
-                    chunk_id=c.chunk_id,
-                    passed_stage1=False,
-                    passed_stage2=None,
-                    reason="chunk_id 不存在（幻觉或已删）",
-                )
-            )
-            continue
-
-        ok1 = stage1_substring_ok(c.evidence_quote or "", chunk_text)
-        if not ok1:
-            details.append(
-                VerificationResult(
-                    claim=c.claim,
-                    chunk_id=c.chunk_id,
-                    passed_stage1=False,
-                    passed_stage2=None,
-                    reason="evidence_quote 不是所引块原文的字面子串",
-                )
-            )
-            continue
-
-        ok2: bool | None = None
-        if run_stage2:
-            ok2 = _nli_entails(premise=c.evidence_quote or "", hypothesis=c.claim)
-
-        verified = ok2 is not False  # Stage 1 已过；Stage 2 未启用(None)视为通过
-        if verified:
+        ok, detail = _verify_pair(
+            c.claim, c.chunk_id, c.evidence_quote, chunks_by_id, run_stage2=run_stage2
+        )
+        details.append(detail)
+        if ok:
             c.verified = True
             passed.append(c)
-        details.append(
-            VerificationResult(
-                claim=c.claim,
-                chunk_id=c.chunk_id,
-                passed_stage1=True,
-                passed_stage2=ok2,
-                reason=(
-                    "通过" if verified
-                    else "evidence_quote 不支持该 claim（语义蕴含不成立）"
-                ),
-            )
+
+    return passed, details
+
+
+def verify_suggestions(
+    suggestions: list,
+    chunks_by_id: dict,
+    *,
+    run_stage2: bool = True,
+) -> tuple[list, list[VerificationResult]]:
+    """对 ``suggestions[]`` 跑同一套两级验证，只是把 ``basis`` 当 claim。
+
+    为什么建议也要验：原先只验 ``citations``，于是**建议是整份报告里唯一没有
+    出处的部分**——8 条引用全部 verified、5 条建议的理由却可能是模型自由发挥的。
+    实测就抓到过一条 basis（「偏 N 的人做细节核对时出错往往是因为没有建立起
+    检查的固定步骤」）在所有 citation 里都找不到出处。
+
+    验的是「Basis 这条知识是否真被原文支持」，不是「这条行动建议是否必然有效」
+    ——后者无法用 NLI 判定。没通过的建议一律丢弃（``passed`` 里不会出现），
+    调用方据此记日志；**不允许**把它们留在响应里却只打个 ``verified=False``，
+    前端不会展示这个字段，等于照样把无据建议发给用户。
+    """
+    passed: list = []
+    details: list[VerificationResult] = []
+
+    for s in suggestions:
+        ok, detail = _verify_pair(
+            s.basis or "", s.chunk_id, s.evidence_quote, chunks_by_id, run_stage2=run_stage2
         )
+        details.append(detail)
+        if ok:
+            s.verified = True
+            passed.append(s)
 
     return passed, details
 

@@ -260,3 +260,97 @@ def test_test_info_no_longer_has_kb_namespace():
     from app.api.schemas import TestInfo
 
     assert "kb_namespace" not in TestInfo.model_fields
+
+
+def test_enhance_async_drops_suggestions_without_evidence(monkeypatch):
+    """建议没出处时必须被丢弃，而不是「留着但标 verified=False」。
+
+    原实现只验 citations，suggestions 是整份报告里唯一没有出处的部分——前端
+    也不展示 verified，留着等于照样把无据建议发给用户。
+    """
+    import asyncio
+
+    from app.api import routes
+    from app.api.schemas import (
+        Citation,
+        EnhanceData,
+        EnhanceRequest,
+        Section,
+        Suggestion,
+    )
+    from app.rag.retriever import RetrievedChunk
+
+    quote = "偏直觉的人更容易被模式、关联、可能性吸引。"
+    chunk = RetrievedChunk(
+        chunk_id="typology_00001",
+        text=quote + "抽象概念、未来图景、隐喻对他们更好用。",
+        source="16型人格类型详解.md",
+        kb_namespace="typology",
+        section_title="直觉倾向",
+    )
+
+    async def fake_synthesize(req, chunks):
+        return EnhanceData(
+            enhanced_text="总结",
+            sections=[Section(title="直觉", content="内容")],
+            suggestions=[
+                Suggestion(
+                    text="在需要核对细节时建立检查清单。",
+                    basis="直觉倾向的人更容易被模式与可能性吸引",
+                    chunk_id="typology_00001",
+                    evidence_quote=quote,
+                ),
+                Suggestion(
+                    text="每天冥想二十分钟。",
+                    basis="这句话是模型编的",
+                    chunk_id="typology_00001",
+                    evidence_quote="原文里根本没有这一句。",
+                ),
+            ],
+            citations=[
+                Citation(
+                    claim="直觉倾向的人更容易被模式与可能性吸引",
+                    source="16型人格类型详解.md",
+                    chunk_id="typology_00001",
+                    evidence_quote=quote,
+                    section=0,
+                )
+            ],
+        )
+
+    monkeypatch.setattr("app.rag.retriever.retrieve", lambda *a, **k: [chunk])
+    monkeypatch.setattr("app.rag.synthesizer.synthesize", fake_synthesize)
+    # Stage 2 的判定在本用例里无关（我们验的是「有没有走同一套验证」），
+    # 且真实 NLI 不认同义改写，会让通过与否随模型版本漂移。
+    monkeypatch.setattr("app.core.verifier._nli_entails", lambda **k: True)
+
+    req = EnhanceRequest.model_validate(
+        {
+            "schema_version": 1,
+            "test": {
+                "code": 13,
+                "key": "mbti",
+                "name": "16型人格测试（MBTI）",
+                "domains": ["typology", "common"],
+                "policy": "full",
+            },
+            "result": {"level": "完成测试"},
+            "measures": [
+                {
+                    "key": "SN",
+                    "label": "感觉/直觉",
+                    "kind": "dimension",
+                    "score": 6,
+                    "threshold": 12,
+                    "pole": "N",
+                }
+            ],
+        }
+    )
+
+    data = asyncio.run(routes._enhance_async(req))
+
+    assert [s.text for s in data.suggestions] == ["在需要核对细节时建立检查清单。"]
+    assert data.suggestions[0].verified is True
+    assert data.citations[0].verified is True
+    assert data.rag_status == "ready"

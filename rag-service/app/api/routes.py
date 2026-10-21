@@ -105,6 +105,7 @@ async def _enhance_async(req: EnhanceRequest) -> EnhanceData:
         support_coverage,
         support_precision,
         verify_citations,
+        verify_suggestions,
     )
     from app.rag.query_builder import build_queries, retrieval_namespaces
     from app.rag.retriever import retrieve
@@ -145,6 +146,11 @@ async def _enhance_async(req: EnhanceRequest) -> EnhanceData:
     precision, low, high = support_precision(n_passed, total)
 
     data.citations = passed
+
+    # 建议走同一套两级验证，把 basis 当 claim（ADR-0003 补充）。没通过的直接丢弃：
+    # 留着它们等于把「看起来有据」的建议发给用户，而前端并不会展示 verified。
+    sugg_passed, sugg_details = verify_suggestions(data.suggestions, chunks_by_id)
+    data.suggestions = sugg_passed
     data.rag_status = "ready"
 
     # ADR-0003 要求精确率与覆盖率**成对上报**：单看精确率时，「每节只写一句
@@ -152,13 +158,16 @@ async def _enhance_async(req: EnhanceRequest) -> EnhanceData:
     coverage = support_coverage(passed, len(data.sections))
 
     logger.info(
-        "verify: passed=%d/%d precision=%.3f wilson=[%.3f,%.3f] coverage=%.3f",
+        "verify: passed=%d/%d precision=%.3f wilson=[%.3f,%.3f] coverage=%.3f "
+        "suggestions=%d/%d",
         n_passed,
         total,
         precision,
         low,
         high,
         coverage,
+        len(sugg_passed),
+        len(sugg_details),
     )
 
     if total > 0 and n_passed == 0:

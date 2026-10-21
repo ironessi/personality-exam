@@ -74,12 +74,20 @@ _SYSTEM_PROMPT = """你是一名心理测评报告撰写助手。你的任务是
 引文多（比如引文只讲了倾向、claim 却推出诊断）同样是错的。
 5. 只输出 JSON，不要输出任何解释性文字、代码块围栏或前后缀。
 6. 不得给出服药、停药、调药等具体用药建议。
+7. `suggestions` 里的每一条也必须带出处：`basis` 是这条建议所依据的那句知识\
+（不超过 25 字，口径同 claim），`chunk_id` 与 `evidence_quote` 的规定与 citation\
+完全相同——引文逐字复制、且必须真支持 `basis`。**不许**只写「建议多运动」这类\
+没有知识依据的通用建议；写不出来就少写几条。
+8. 描述维度/因子的强弱时，**只能使用结果里给定的「程度=…」原词**，不得自行升级或降级（给了「轻度偏向」就不能写「非常明显」「较为明显」）；「接近中间」的那一项不要描述成某种偏向。数值与叙述必须一致，**排序也要一致**——最明显的那一维不能被说成最温和的。
 
 输出 JSON 结构（严格按此，字段名不得增删）：
 {
   "enhanced_text": "一段连贯的总结性解读",
   "sections": [{"title": "...", "content": "..."}],
-  "suggestions": [{"text": "...", "basis": "..."}],
+  "suggestions": [
+    {"text": "可执行的建议", "basis": "该建议依据的那句知识", "chunk_id": "...",
+     "evidence_quote": "..."}
+  ],
   "citations": [
     {"claim": "...", "evidence_quote": "...", "chunk_id": "...", "source": "...",
      "section": 0}
@@ -107,6 +115,31 @@ def _chunk_lines(chunks: list[RetrievedChunk]) -> str:
     return "\n\n".join(lines)
 
 
+_STRENGTH_BANDS: tuple[tuple[float, str], ...] = (
+    (0.20, "接近中间（不要强调任何一端的偏向）"),
+    (0.50, "轻度偏向"),
+    (0.80, "明显偏向"),
+    (float("inf"), "非常明显"),
+)
+
+
+def strength_band(strength: float | None) -> str:
+    """把 ``strength`` 折成**模型必须照抄**的程度词。
+
+    为什么不让模型自己判断强弱：实测拿 E=+0.33 / S=-0.67 的档案去问，模型写出
+    「外倾和思考倾向较为明显，直觉和判断倾向相对温和」——把最弱的一维说成最明显，
+    把最强的一维说成最温和，正好反了。strength 是数值，程度词必须由代码定，
+    否则每次生成都可能得到一套自相矛盾的叙述。
+    """
+    if strength is None:
+        return "无"
+    mag = abs(strength)
+    for upper, label in _STRENGTH_BANDS:
+        if mag < upper:
+            return label
+    return "非常明显"
+
+
 def _measures_lines(req: EnhanceRequest) -> str:
     """把测评结果序列化给模型。strength/factor_level 已由 Go 侧算好，直接转述。"""
     lines: list[str] = [f"测评：{req.test.name}", f"总体：{req.result.level}"]
@@ -114,6 +147,7 @@ def _measures_lines(req: EnhanceRequest) -> str:
         bits = [f"{m.label}({m.kind}) score={m.score}"]
         if m.strength is not None:
             bits.append(f"strength={m.strength:+.2f}")
+            bits.append(f"程度={strength_band(m.strength)}")
         if m.factor_level:
             bits.append(f"factor_level={m.factor_level}")
         if m.threshold is not None and m.pole:
@@ -150,9 +184,11 @@ def _parse_llm_json(raw: str) -> dict:
     尝试去掉围栏，再失败则取第一个 ``{`` 到最后一个 ``}`` 之间。
     """
     text = raw.strip()
-    # 去代码围栏
+    # 去代码围栏。这里必须取 split 的**中间段**：```json\n{...}\n``` 切开是
+    # ['', 'json\n{...}\n', '']，原先写 [-1] 会拿到空串，于是围栏一出现就必挂。
     if text.startswith("```"):
-        text = text.split("```", 2)[-1].strip()
+        parts = text.split("```")
+        text = (parts[1] if len(parts) > 1 else "").strip()
         if text.startswith("json"):
             text = text[4:].strip()
     try:
@@ -214,10 +250,20 @@ def _to_enhance_data(
         for s in (payload.get("sections") or [])
         if isinstance(s, dict)
     ]
+    # 建议也要过敏感词过滤器：原先只过滤 citations，于是「建议停用抗抑郁药」这类
+    # 句子可以原样出现在 suggestions 里发给用户（is_claim_safe 的给药规则不做
+    # 否定豁免，所以「不建议服用」同样会被拦下——那是刻意的）。
     suggestions = [
-        Suggestion(text=str(s.get("text") or ""), basis=str(s.get("basis") or ""))
+        Suggestion(
+            text=str(s.get("text") or ""),
+            basis=str(s.get("basis") or ""),
+            chunk_id=str(s.get("chunk_id") or ""),
+            evidence_quote=(s.get("evidence_quote") or None),
+        )
         for s in (payload.get("suggestions") or [])
         if isinstance(s, dict)
+        and is_claim_safe(str(s.get("text") or ""))
+        and is_claim_safe(str(s.get("basis") or ""))
     ]
     citations = [
         cit

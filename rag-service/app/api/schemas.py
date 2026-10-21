@@ -192,10 +192,24 @@ class Section(BaseModel):
 
 
 class Suggestion(BaseModel):
+    """一条行动建议。
+
+    建议原先只有 ``text`` + ``basis`` 两个自由文本字段，是整份报告里**唯一
+    没有出处**的部分：``citations`` 过两级验证，建议的理由却可能凭空生成。
+    现在 ``basis`` 必须像 ``claim`` 一样带 ``chunk_id`` 与逐字 ``evidence_quote``，
+    并走同一套 ``verify_suggestions`` 校验（ADR-0003 补充）。
+
+    ``verified`` 由服务端写回；**未通过的建议会被直接丢弃，不会出现在响应里**
+    ——前端不展示这个字段，留着它等于把无据建议照样发给用户。
+    """
+
     model_config = ConfigDict(extra="forbid")
 
     text: str
-    basis: str = Field(..., description="如 MBTI_16型人格详解#p12")
+    basis: str = Field(..., description="这条建议依据的那句知识（≤25 字，同 claim 口径）")
+    chunk_id: str = ""
+    evidence_quote: str | None = Field(default=None, max_length=64)
+    verified: bool = False
 
 
 class Citation(BaseModel):

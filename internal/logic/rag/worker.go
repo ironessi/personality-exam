@@ -116,13 +116,38 @@ func processJob(ctx context.Context, client *Client, cfg Config, job Job) {
 	g.Log().Infof(ctx, "RAG worker: record_id=%d 增强完成并回填（%s）", job.RecordID, elapsed)
 }
 
-// backfill 把增强结果写回该行的 result_data.rag。
+// backfill 把增强结果写回该行的 result_data.rag，并同步顶层 rag_status。
 //
 // 为什么要读-改-写整份 JSON：result_data 是一整个 JSON 列，MySQL 侧没有
 // 稳定的"只改一个子键"的通用写法（JSON_SET 要拼路径，且列类型/版本敏感）。
 // ADR-0007 保证了并发安全：同步路径超时后 handler 不再写这一行，
 // worker 是唯一的写者。
 func backfill(ctx context.Context, recordID int64, ragMap map[string]interface{}) error {
+	return updateResultData(ctx, recordID, func(result map[string]interface{}) {
+		result["rag"] = ragMap
+		// 顶层也镜像一份，前端只看这一个字段就能决定要不要轮询（§6.3）。
+		// 值取自 ragMap["status"]，与 Python 的 RagStatus 枚举同源。
+		if status, ok := ragMap["status"].(string); ok {
+			result["rag_status"] = status
+		}
+	})
+}
+
+// MarkFailed 把顶层 rag_status 标成 failed。
+//
+// 用于「任务根本没能入队、也没有同步结果」的情况：否则该行会永远停在
+// pending，前端会一直轮询一个不会有结果的任务。
+func MarkFailed(ctx context.Context, recordID int64) error {
+	return updateResultData(ctx, recordID, func(result map[string]interface{}) {
+		result["rag_status"] = "failed"
+	})
+}
+
+func updateResultData(
+	ctx context.Context,
+	recordID int64,
+	mutate func(result map[string]interface{}),
+) error {
 	one, err := dao.UserTestResults.Ctx(ctx).WherePri(recordID).One()
 	if err != nil {
 		return fmt.Errorf("读取测评结果失败: %w", err)
@@ -135,7 +160,7 @@ func backfill(ctx context.Context, recordID int64, ragMap map[string]interface{}
 	if err := json.Unmarshal([]byte(one["result_data"].String()), &result); err != nil {
 		return fmt.Errorf("解析已有 result_data 失败: %w", err)
 	}
-	result["rag"] = ragMap
+	mutate(result)
 
 	updated, err := json.Marshal(result)
 	if err != nil {

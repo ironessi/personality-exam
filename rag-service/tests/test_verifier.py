@@ -218,3 +218,52 @@ class TestCoverage:
         from app.core.verifier import support_coverage
 
         assert support_coverage([], 0) == 0.0
+
+
+class TestSuggestionVerification:
+    """建议也要有出处：``basis`` 走和 ``claim`` 完全相同两级验证。
+
+    原实现只验 ``citations``，于是建议是整份报告里唯一无出处的部分——实测抓到过
+    一条 basis 在所有 citation 里都找不到出处。
+    """
+
+    CHUNK = "偏直觉的人更容易被模式、关联、可能性吸引。抽象概念、未来图景、隐喻对他们更好用。"
+
+    def _sugg(self, basis: str, quote: str | None, chunk_id: str = "typology_00001"):
+        from app.api.schemas import Suggestion
+
+        return Suggestion(text="在需要核对细节时建立检查清单。", basis=basis, chunk_id=chunk_id, evidence_quote=quote)
+
+    def test_verified_suggestion_is_kept(self):
+        from app.core.verifier import verify_suggestions
+
+        s = self._sugg("直觉倾向的人更容易被模式与可能性吸引", "偏直觉的人更容易被模式、关联、可能性吸引。")
+        passed, details = verify_suggestions([s], {"typology_00001": self.CHUNK}, run_stage2=False)
+        assert len(passed) == 1
+        assert passed[0].verified is True
+        assert details[0].passed_stage1 is True
+
+    def test_fabricated_basis_quote_is_dropped(self):
+        from app.core.verifier import verify_suggestions
+
+        s = self._sugg("偏 N 的人做细节核对时出错是因为没建立检查步骤", "偏N的人做细节核对时出错往往是因为没有建立起检查的固定步骤")
+        passed, details = verify_suggestions([s], {"typology_00001": self.CHUNK}, run_stage2=False)
+        assert passed == []
+        assert details[0].passed_stage1 is False
+        assert "字面子串" in details[0].reason
+
+    def test_suggestion_without_chunk_id_is_dropped(self):
+        """模型没填出处时必须丢弃，而不是当成通过。"""
+        from app.core.verifier import verify_suggestions
+
+        s = self._sugg("直觉倾向的人更容易被模式吸引", self.CHUNK, chunk_id="")
+        passed, details = verify_suggestions([s], {"typology_00001": self.CHUNK}, run_stage2=False)
+        assert passed == []
+        assert details[0].reason == "chunk_id 不存在（幻觉或已删）"
+
+    def test_suggestion_without_quote_is_dropped(self):
+        from app.core.verifier import verify_suggestions
+
+        s = self._sugg("直觉倾向的人更容易被模式吸引", None)
+        passed, _ = verify_suggestions([s], {"typology_00001": self.CHUNK}, run_stage2=False)
+        assert passed == []
