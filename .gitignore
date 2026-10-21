@@ -22,6 +22,7 @@ go.work
 main
 personality-test
 personality-test.exe
+PersonalityTest
 
 # Local configuration and secrets
 config/*.yaml
@@ -49,3 +50,11 @@ doc/
 Thumbs.db
 CLAUDE.md
 AGENTS.md
+
+# Reference project copy (not part of this repo)
+sec-insights_副本/
+
+# 本地 Go 构建缓存（沙箱内不能写 ~/Library/Caches/go-build）
+.gocache/
+# 临时验证脚本产物
+.tmp/

@@ -12,6 +12,7 @@ import (
 	"PersonalityTest/internal/controller/user_test"
 	"PersonalityTest/internal/logic/middleware"
 	"PersonalityTest/internal/logic/pay"
+	"PersonalityTest/internal/logic/rag"
 	"context"
 
 	_ "github.com/gogf/gf/contrib/drivers/mysql/v2"
@@ -154,6 +155,10 @@ var (
 					}
 				}
 			}()
+
+			// RAG 异步 worker：只在 rag.enable 为真时启动（内部自判）。
+			// 放在 s.Run() 之前启动，避免前几个请求入队后长时间没人消费。
+			rag.StartWorker(ctx, rag.LoadConfig(ctx))
 
 			s.Run()
 			return nil

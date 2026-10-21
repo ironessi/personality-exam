@@ -3,6 +3,7 @@ package user_test
 import (
 	"PersonalityTest/internal/dao"
 	"PersonalityTest/internal/logic/evaluation"
+	"PersonalityTest/internal/logic/rag"
 	"PersonalityTest/internal/logic/result"
 	"PersonalityTest/internal/model/do"
 	"PersonalityTest/internal/model/entity"
@@ -489,6 +490,18 @@ func (c *Controller) SubmitTestResult(ctx context.Context, req *SubmitTestResult
 	// 确保结果包含必要的字段
 	ensureResultFields(resultMap, answerRecords)
 
+	// ============ RAG 增强（旁路，失败绝不影响主流程）============
+	// ADR-0007：同步最多等 3 秒，超时转异步由 worker 回填。
+	// 这里**不能**返回错误——增强是加分项，不是测评结果的一部分。
+	pendingRAG := rag.Prepare(ctx, int(req.TestId), req.TestName, resultMap)
+	ragAttached := false
+	if pendingRAG != nil {
+		if ragMap := pendingRAG.TryInline(ctx); ragMap != nil {
+			resultMap["rag"] = ragMap
+			ragAttached = true
+		}
+	}
+
 	// 将结果序列化为 JSON
 	resultJSON, err := json.Marshal(resultMap)
 	if err != nil {
@@ -507,6 +520,14 @@ func (c *Controller) SubmitTestResult(ctx context.Context, req *SubmitTestResult
 	}
 
 	recordID, _ := dbResult.LastInsertId()
+
+	// 同步路径没拿到结果时入队，交给 worker 用完整 30 秒超时跑完再回填。
+	// 入队失败只记日志：用户已经拿到测评结果，队列不是他的问题。
+	if pendingRAG != nil && !ragAttached && recordID > 0 {
+		if enqueueErr := pendingRAG.Enqueue(ctx, recordID); enqueueErr != nil {
+			g.Log().Warningf(ctx, "RAG: 增强任务入队失败（不影响测评结果）: %v", enqueueErr)
+		}
+	}
 
 	// 返回响应
 	res = &SubmitTestResultRes{
