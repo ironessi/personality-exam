@@ -2,8 +2,12 @@ package evaluation
 
 import (
 	v1 "PersonalityTest/api/test_type/v1"
+	"context"
 	"fmt"
 	"sort"
+	"strings"
+
+	"github.com/gogf/gf/v2/frame/g"
 )
 
 // Factor 因子定义
@@ -93,19 +97,33 @@ const SCL90CrisisLabel = "危机信号（需立即评估）"
 // SCL90CrisisLevel 命中危机信号时覆盖 level 的取值。
 const SCL90CrisisLevel = "需立即评估"
 
+// getScore 把一次作答折算成 1~5 分。
+//
+// 前端传的 `answer` 是选项文本，历史上只认 A~E 五个字母；数字字符串与
+// 中文频次词（没有/很轻/中等/偏重/严重）都得认，否则同一份量表换个前端
+// 就整卷 0 分（实测踩过：answer="5" 被折成 0，总分直接变 0）。
 func getScore(answer string) int {
 	scoreMap := map[string]int{
-		"A": 1,
-		"B": 2,
-		"C": 3,
-		"D": 4,
-		"E": 5,
+		"A": 1, "B": 2, "C": 3, "D": 4, "E": 5,
+		"1": 1, "2": 2, "3": 3, "4": 4, "5": 5,
+		"没有": 1, "很轻": 2, "中等": 3, "偏重": 4, "严重": 5,
 	}
 
-	if score, exists := scoreMap[answer]; exists {
+	if score, exists := scoreMap[strings.TrimSpace(answer)]; exists {
 		return score
 	}
 	return 0
+}
+
+// scoreOf 优先用客户端给的 score 字段，取不到再回退解析 answer。
+//
+// `score` 是 v1.AnswerRecord 的自带字段，前端算好了就直接用——比再解析一遍
+// 文本可靠。只有落在 1~5 之外（比如 0 或没填）时才回退。
+func scoreOf(record v1.AnswerRecord) int {
+	if record.Score >= 1 && record.Score <= 5 {
+		return int(record.Score)
+	}
+	return getScore(record.Answer)
 }
 
 func (e *Evaluation) SCL90(data []v1.AnswerRecord) (interface{}, error) {
@@ -114,11 +132,27 @@ func (e *Evaluation) SCL90(data []v1.AnswerRecord) (interface{}, error) {
 			return nil, errors.New("invalid data")
 		}*/
 
+	// 题号是 **1 基**的（normalizeQuestionIDs 已折算成 1..N），必须减 1 再当下标。
+	// 原先写 scores[record.QuestionID]：题 1 的答案写进下标 1，全表错位一格，
+	// 因子 1 读到的永远是没人写过的下标 0——整卷看似有分，实际每个因子的题
+	// 都是隔壁题目的答案。
 	scores := make([]int, 90)
+	var overflow int
 	for _, record := range data {
-		if record.QuestionID >= 0 && record.QuestionID < 90 {
-			scores[record.QuestionID] = getScore(record.Answer)
+		if record.QuestionID < 1 {
+			continue
 		}
+		if record.QuestionID > len(scores) {
+			overflow++
+			continue
+		}
+		scores[record.QuestionID-1] = scoreOf(record)
+	}
+	if overflow > 0 {
+		// 题库有 95 题、评分只算 90 项（详见 §9 的题库重写项）。多出来的题
+		// 不参与计分，但要留下痕迹，免得以后有人以为它们被算进去了。
+		g.Log().Warningf(context.Background(),
+			"SCL-90 有 %d 道题的题号超出 90 项计分范围，已忽略", overflow)
 	}
 
 	result := calculateDetailedResults(scores)
@@ -193,8 +227,10 @@ func calculateDetailedResults(scores []int) SCL90TestResult {
 	// 判断是否需要进一步评估：总分≥160 或 任一因子分≥2 或 阳性项目数>43
 	result.NeedFurtherEval = result.TotalScore >= 160 || len(result.HighRiskFactors) > 0 || result.PositiveCount > 43
 
-	// 根据总分进行分级
-	if result.TotalScore <= 160 {
+	// 根据总分进行分级。分界点用 < 160，与上面 NeedFurtherEval 的 ">= 160"
+	// 严格互补：原先写 <= 160，于是总分正好 160 时会一边报「正常范围」、
+	// 一边 need_further_eval=true，同一份结果自相矛盾。
+	if result.TotalScore < 160 {
 		result.Level = "正常范围"
 		result.Title = "情绪状态正常"
 		result.Analysis = "您的SCL-90总分为正常范围，阳性项目数在可控范围内。"
@@ -232,6 +268,32 @@ func calculateDetailedResults(scores []int) SCL90TestResult {
 			"考虑药物治疗配合心理治疗",
 			"建立紧急支持网络",
 			"学习危机应对策略",
+		}
+	}
+
+	// 总分不高、但个别因子超过 2 分（或阳性项目数偏多）时，不能继续报「正常范围」：
+	// 此时 need_further_eval 已为 true，两份结论会打架。这里只做「不再说正常」的
+	// 升级，不新增更重的档位——因子分是描述性指标，靠它推严重程度是过度解读。
+	if result.Level == "正常范围" && result.NeedFurtherEval {
+		result.Level = "轻度异常"
+		result.Title = "总分不高，但有个别方面需要关注"
+		if n := len(result.HighRiskFactors); n > 0 {
+			result.Analysis = fmt.Sprintf(
+				"您的SCL-90总分未达到 160 分的筛查阳性线，但有 %d 个因子分达到或超过 2 分。"+
+					"因子分高只说明这一组体验在近期比较突出，并不等于患病；"+
+					"建议结合最近的压力事件和生活状态观察一段时间，若持续影响工作、睡眠或人际，"+
+					"再与精神科医生或注册心理师面谈评估。", n)
+		} else {
+			result.Analysis = fmt.Sprintf(
+				"您的SCL-90总分未达到 160 分的筛查阳性线，但阳性项目数（%d 项）偏多，"+
+					"说明有不少条目报告了轻度以上的不适。单项都很轻时总分不会高，"+
+					"但分布广本身值得留意；建议留意近期压力来源，必要时寻求专业评估。",
+				result.PositiveCount)
+		}
+		result.Suggestions = []string{
+			"留意近期压力事件与睡眠、作息的变化",
+			"把困扰记录下来，观察两周是否有缓解",
+			"若持续影响工作或人际，考虑预约心理咨询",
 		}
 	}
 

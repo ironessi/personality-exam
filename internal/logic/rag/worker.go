@@ -113,6 +113,8 @@ func processJob(ctx context.Context, client *Client, cfg Config, job Job) {
 		g.Log().Errorf(ctx, "RAG worker: record_id=%d 回填失败: %v", job.RecordID, err)
 		return
 	}
+	// 回填成功后写缓存：下一次同一份档案提交就能走同步快路径。
+	saveCache(ctx, cfg, job.Request, ragMap)
 	g.Log().Infof(ctx, "RAG worker: record_id=%d 增强完成并回填（%s）", job.RecordID, elapsed)
 }
 

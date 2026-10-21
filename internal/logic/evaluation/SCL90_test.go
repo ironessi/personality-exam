@@ -90,3 +90,45 @@ func TestSCL90NoCrisisKeepsNormalBand(t *testing.T) {
 		t.Errorf("level = %q，期望「正常范围」", result.Level)
 	}
 }
+
+// TestSCL90HighFactorWithLowTotalIsNotReportedNormal 抓的是「总分正常 + 因子高分」
+// 这一组合：need_further_eval 为 true 时再报「正常范围」，同一份结果自相矛盾。
+func TestSCL90HighFactorWithLowTotalIsNotReportedNormal(t *testing.T) {
+	scores := allOnes()
+	// 取第一个因子（躯体化）的前 6 个题项答“严重”（5 分）：
+	// 该因子均值 = (6*5 + 6*1)/12 = 3.0，总分 90+24=114（远低于 160）。
+	// 注意必须用 factor.Items 里的题号，题目在问卷里不是连续排列的。
+	for i := 0; i < 6; i++ {
+		scores[SCL90Factors[0].Items[i]-1] = 5
+	}
+
+	result := calculateDetailedResults(scores)
+
+	if !result.NeedFurtherEval {
+		t.Fatal("因子分 2.5 时 need_further_eval 应为 true")
+	}
+	if result.Level == "正常范围" {
+		t.Error("need_further_eval 为 true 时不应报「正常范围」")
+	}
+	if strings.Contains(result.Analysis, "筛查阳性线") == false {
+		t.Errorf("analysis 应如实说明总分不高，实得：%s", result.Analysis)
+	}
+}
+
+// TestSCL90TotalExactly160IsNotNormal 分界点必须与 NeedFurtherEval 严格互补。
+func TestSCL90TotalExactly160IsNotNormal(t *testing.T) {
+	scores := allOnes()
+	// 90 + 17*4 + 2 = 160
+	for i := 0; i < 17; i++ {
+		scores[i] = 5
+	}
+	scores[17] = 3
+
+	got := calculateDetailedResults(scores)
+	if got.TotalScore != 160 {
+		t.Fatalf("构造失败：total = %d，期望 160", got.TotalScore)
+	}
+	if got.Level == "正常范围" {
+		t.Error("总分 160 已到筛查阳性线，不应报「正常范围」")
+	}
+}

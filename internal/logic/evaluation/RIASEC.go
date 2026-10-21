@@ -3,6 +3,7 @@ package evaluation
 import (
 	v1 "PersonalityTest/api/test_type/v1"
 	"fmt"
+	"sort"
 )
 
 // RIASECResult 霍兰德职业兴趣测试(RIASEC)结果
@@ -103,35 +104,26 @@ func (e *Evaluation) RIASEC(data []v1.AnswerRecord) (interface{}, error) {
 	}, nil
 }
 
-// determineRIASECTypes 确定RIASEC主导兴趣类型和次要兴趣类型
+// determineRIASECTypes 确定RIASEC主导兴趣类型和次要兴趣类型。
+//
+// 必须**定序**遍历，不能 range map：Go 的 map 迭代顺序是随机的，两份完全相同的
+// 作答只要最高分并列，就会随机得到不同的 dominant_type——实测同一份 54/54 并列的
+// 答案，base=1 时报「社会型」、base=376 时报「研究型」，用户重测一次结果就变了。
+// 这里按 R-I-A-S-E-C 的固定顺序做稳定排序，并列时取排在前面的那一型。
 func determineRIASECTypes(realistic, investigative, artistic, social, enterprising, conventional int) (string, string) {
-	// 定义类型映射
-	types := map[string]int{
-		"现实型(R)": realistic,
-		"研究型(I)": investigative,
-		"艺术型(A)": artistic,
-		"社会型(S)": social,
-		"企业型(E)": enterprising,
-		"常规型(C)": conventional,
+	types := []struct {
+		name  string
+		score int
+	}{
+		{"现实型(R)", realistic},
+		{"研究型(I)", investigative},
+		{"艺术型(A)", artistic},
+		{"社会型(S)", social},
+		{"企业型(E)", enterprising},
+		{"常规型(C)", conventional},
 	}
 
-	// 找出最高得分和次高得分的类型
-	maxScore1 := 0
-	maxType1 := ""
-	maxScore2 := 0
-	maxType2 := ""
+	sort.SliceStable(types, func(i, j int) bool { return types[i].score > types[j].score })
 
-	for typeName, score := range types {
-		if score > maxScore1 {
-			maxScore2 = maxScore1
-			maxType2 = maxType1
-			maxScore1 = score
-			maxType1 = typeName
-		} else if score > maxScore2 {
-			maxScore2 = score
-			maxType2 = typeName
-		}
-	}
-
-	return maxType1, maxType2
+	return types[0].name, types[1].name
 }

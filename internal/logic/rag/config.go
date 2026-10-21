@@ -31,6 +31,11 @@ type Config struct {
 	RedisDB      int
 	RedisPass    string
 	QueueKey     string
+
+	// CacheTTLSeconds 是增强结果的缓存时长（rag.cacheTTL，默认 30 天）。
+	// 缓存键是「测评类型 + 得分档案」的指纹，不含用户身份——同一份档案
+	// 换个人提交，解读本来就该一样，也就不该再花一次 token。
+	CacheTTLSeconds int
 }
 
 // 默认值刻意与 config.yaml 的注释一致：即使配置项缺失也不会 panic，
@@ -43,6 +48,7 @@ const (
 	defaultRedisAddress        = "127.0.0.1:6379"
 	defaultRedisDB             = 5
 	defaultQueueKey            = "rag:queue"
+	defaultCacheTTLSeconds     = 2592000 // 30 天
 )
 
 // LoadConfig 从配置中心读 rag 段。缺失的键取保守默认值。
@@ -60,6 +66,7 @@ func LoadConfig(ctx context.Context) Config {
 	cfg.RedisDB = g.Cfg().MustGet(ctx, "rag.redis.db", defaultRedisDB).Int()
 	cfg.RedisPass = g.Cfg().MustGet(ctx, "rag.redis.pass", "").String()
 	cfg.QueueKey = g.Cfg().MustGet(ctx, "rag.queueKey", defaultQueueKey).String()
+	cfg.CacheTTLSeconds = g.Cfg().MustGet(ctx, "rag.cacheTTL", defaultCacheTTLSeconds).Int()
 	return cfg
 }
 
@@ -81,6 +88,14 @@ func (c Config) WorkerTimeout() time.Duration {
 		return time.Duration(defaultTimeoutSeconds) * time.Second
 	}
 	return time.Duration(c.TimeoutSeconds) * time.Second
+}
+
+// CacheTTL 是增强结果缓存的有效期。配成 0 或负数时关闭缓存读取。
+func (c Config) CacheTTL() time.Duration {
+	if c.CacheTTLSeconds <= 0 {
+		return 0
+	}
+	return time.Duration(c.CacheTTLSeconds) * time.Second
 }
 
 // Whitelisted 报告该测评是否在灰度白名单里。

@@ -72,6 +72,14 @@ func Prepare(
 // 返回 nil 表示"期限内没拿到结果"，调用方应当把请求交给 Enqueue 异步兜底。
 // 这里区分不了"超时"和"服务真的挂了"，也不需要区分——两者的处理完全一样。
 func (p *Pending) TryInline(ctx context.Context) map[string]interface{} {
+	// 先看缓存：同一份答案档案重复提交（用户刷新、重测同题、灰度验收）
+	// 不应该再花一次三四秒和一次 token。缓存命中是真正的"快路径"，
+	// 比任何超时调参都有效。
+	if cached := p.TryCache(ctx); cached != nil {
+		g.Log().Infof(ctx, "RAG: 测评 %d 命中缓存，跳过外呼", p.TestType)
+		return cached
+	}
+
 	deadline, cancel := context.WithTimeout(ctx, p.cfg.SyncDeadline())
 	defer cancel()
 
@@ -93,5 +101,7 @@ func (p *Pending) TryInline(ctx context.Context) map[string]interface{} {
 	}
 	g.Log().Infof(ctx, "RAG: 测评 %d 同步增强命中，sections=%d citations=%d",
 		p.TestType, len(resp.Data.Sections), len(resp.Data.Citations))
+
+	p.SaveCache(ctx, rag)
 	return rag
 }
