@@ -64,6 +64,28 @@ func TestCacheFingerprintEmptyRequest(t *testing.T) {
 	}
 }
 
+// TestCacheFingerprintFollowsPayloadVersion 盯的是「改了落库结构，旧缓存必须失效」。
+//
+// 回归用例：2026-10-22 给 `Suggestion` 补上依据字段后，同一份档案仍然命中旧
+// payload，库里继续存 {text, basis}，验收脚本看起来像修复没生效。指纹必须随
+// 落库结构版本变化，否则只能等 30 天 TTL 自然过期。
+func TestCacheFingerprintFollowsPayloadVersion(t *testing.T) {
+	v1, err := fingerprintWithPayloadVersion(fpReq("MBTI", 0.5), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v2, err := fingerprintWithPayloadVersion(fpReq("MBTI", 0.5), 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v1 == v2 {
+		t.Error("落库结构版本变了，指纹必须变")
+	}
+	if cachePayloadVersion < 2 {
+		t.Error("cachePayloadVersion 应 >= 2：v1 的缓存里建议缺 chunk_id/evidence_quote/verified")
+	}
+}
+
 // TestCacheRoundTrip 需要一个可用的 Redis；不可用时跳过而不是失败——
 // 缓存是可选加速，不该让单测依赖本机环境。
 func TestCacheRoundTrip(t *testing.T) {

@@ -37,7 +37,7 @@ const cannedResponse = `{
   "data": {
     "enhanced_text": "你的外倾维度偏高，说明你更倾向于从外部世界获得能量。",
     "sections": [{"title": "维度解读", "content": "外倾者…"}],
-    "suggestions": [{"text": "多参与协作式任务", "basis": "typology_00012"}],
+    "suggestions": [{"text": "多参与协作式任务", "basis": "外倾者从外部世界获得能量", "chunk_id": "typology_00012", "evidence_quote": "外倾的人思考过程往往需要边说边想", "verified": true}],
     "citations": [{
       "claim": "外倾者从外部世界获得能量",
       "source": "MBTI维度强度解读.md",
@@ -90,6 +90,49 @@ func TestClientEnhanceAndWhitelistStore(t *testing.T) {
 	} {
 		if _, ok := rag[forbidden]; ok {
 			t.Errorf("落库结构里出现了 %q，应被白名单挡掉", forbidden)
+		}
+	}
+}
+
+// TestClientKeepsSuggestionEvidence：建议的验证标记必须活着到落库结构里。
+//
+// 回归用例：`Suggestion` 一度只有 text/basis 两个字段，json.Unmarshal 会把
+// chunk_id / evidence_quote / verified 静默丢掉。验证照做、库里没有，
+// 等于 ADR-0003 的「建议也走同一套验证」没有落地——而单测与接口都不报错。
+func TestClientKeepsSuggestionEvidence(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(cannedResponse))
+	}))
+	defer srv.Close()
+
+	p := newTestPending(t, srv.URL)
+	rag := p.TryInline(context.Background())
+	if rag == nil {
+		t.Fatal("TryInline 返回 nil")
+	}
+
+	suggestions, ok := rag["suggestions"].([]Suggestion)
+	if !ok || len(suggestions) != 1 {
+		t.Fatalf("suggestions = %#v，期望 1 条 []Suggestion", rag["suggestions"])
+	}
+	got := suggestions[0]
+	if !got.Verified {
+		t.Error("verified 丢了：评审人无法区分「有据的建议」与「模型自己编的建议」")
+	}
+	if got.ChunkID != "typology_00012" {
+		t.Errorf("chunk_id = %q，期望 typology_00012", got.ChunkID)
+	}
+	if got.EvidenceQuote == "" {
+		t.Error("evidence_quote 丢了：前端与评审表无法回查依据")
+	}
+	// 落库后仍要能序列化出这三个键（前端读的是 JSON，不是 Go 结构体）。
+	raw, err := json.Marshal(rag)
+	if err != nil {
+		t.Fatalf("序列化落库结构失败: %v", err)
+	}
+	for _, key := range []string{`"chunk_id"`, `"evidence_quote"`, `"verified"`} {
+		if !strings.Contains(string(raw), key) {
+			t.Errorf("落库 JSON 缺 %s: %s", key, raw)
 		}
 	}
 }

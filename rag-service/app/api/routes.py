@@ -173,6 +173,16 @@ async def _enhance_async(req: EnhanceRequest) -> EnhanceData:
     if total > 0 and n_passed == 0:
         data.rag_status = "degraded"
 
+    # 被丢弃的引用/建议逐条打出原因。没有这一行，`passed=0/N` 在日志里只是一个
+    # 数字：可能是模型改了字（Stage 1/1.5），也可能是 chunk_id 编错了，还可能是
+    # 语义不蕴含（Stage 2）——三者的修法完全不同，而验收时只能看到"0"。
+    # claim 截断到 40 字，够定位、不至于把整份报告刷进日志。
+    for label, items in (("引用", details), ("建议", sugg_details)):
+        for detail in items:
+            dropped = (not detail.passed_stage1) or detail.passed_stage2 is False
+            if dropped:
+                logger.info("丢弃%s：「%s」→ %s", label, (detail.claim or "")[:40], detail.reason or "未注明")
+
     return data
 
 

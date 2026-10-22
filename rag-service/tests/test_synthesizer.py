@@ -41,6 +41,23 @@ class TestStrengthBand:
         """没有 strength（如 DISC 那种只有名次的结果）时不能编一个程度。"""
         assert strength_band(None) == "无"
 
+    def test_negative_factor_strength_is_normal_not_a_bias(self):
+        """SCL-90 因子是单极的：负 strength = 低于参考线，不是「偏向低分」。
+
+        实测依据：scl-12 十项全 1 分，生成结果写成「各因子均处于正常范围，
+        程度为「明显偏向」」——|strength|=0.5 被套进双极的量表，一句话自相矛盾。
+        """
+        assert strength_band(-0.5, "factor") == "低于参考线（属正常范围，不要写成偏向）"
+        assert strength_band(-1.0, "factor") == "低于参考线（属正常范围，不要写成偏向）"
+
+    def test_positive_factor_strength_keeps_bands(self):
+        assert strength_band(0.55, "factor") == "明显偏向"
+        assert strength_band(0.1, "factor") == "接近中间（不要强调任何一端的偏向）"
+
+    def test_negative_dimension_strength_still_uses_magnitude(self):
+        """维度是双极的：负值只表示落在另一极，强度照样看绝对值。"""
+        assert strength_band(-0.67, "dimension") == "明显偏向"
+
 
 def _req(strengths: list[float | None]) -> EnhanceRequest:
     return EnhanceRequest.model_validate(
@@ -121,10 +138,32 @@ class TestFitQuote:
         assert got == "第一句讲清楚一件事。"
 
     def test_long_quote_without_boundary_is_dropped(self):
-        """找不到句末标点时宁可丢掉，也不硬切出半句冒充原文。"""
+        """连逗号顿号都没有时宁可丢掉，也不硬切出半句冒充原文。"""
         from app.rag.synthesizer import _fit_quote
 
         assert _fit_quote("没有任何标点" * 20) is None
+
+    def test_long_quote_without_sentence_end_falls_back_to_comma(self):
+        """整段没有句号的长复句在逗号处收尾。
+
+        实测依据：20 条验收用例里被丢弃的引文全部是这种「A 会…，擅长…，因此…」
+        的长复句，语料本身就爱用逗号连写。硬丢等于白丢一条 citation；在逗号处
+        截断仍是**逐字原文**，Stage 1 与 Stage 1.5 照常能验。
+        """
+        from app.rag.synthesizer import _fit_quote
+
+        quote = "F 倾向明显的人会把人、关系影响、价值取向与和谐程度放在前面考虑，" + "擅长体察语气变化" * 10
+        got = _fit_quote(quote)
+        assert got is not None
+        assert len(got) <= 64
+        assert got.endswith("，")
+        assert quote.startswith(got)
+
+    def test_soft_boundary_must_keep_meaningful_length(self):
+        """次级边界切得太靠前就放弃：剩几个字的「引文」没有背书价值。"""
+        from app.rag.synthesizer import _fit_quote
+
+        assert _fit_quote("短，" + "没有句号的超长后半段" * 10) is None
 
     def test_empty_quote(self):
         from app.rag.synthesizer import _fit_quote

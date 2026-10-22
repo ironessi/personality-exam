@@ -72,9 +72,19 @@ type Section struct {
 }
 
 // Suggestion 是一条建议，basis 指向它的依据块。
+//
+// ⚠️ chunk_id / evidence_quote / verified 三个字段必须原样带出去。
+// Python 侧（rag-service/app/api/routes.py 的 _enhance_async）会把每条建议的
+// basis 也过一遍三级验证，只保留通过的建议并标上 verified；
+// 早期这里只声明了 Text 和 Basis，json.Unmarshal 会把另外三个字段静默丢弃，
+// 结果是：验证确实做了、库里却只剩 {text, basis}，评审人与前端都看不到
+// 「这条建议凭什么成立」。ADR-0003 的补充决定因此在 Go 侧等于没落地。
 type Suggestion struct {
-	Text  string `json:"text"`
-	Basis string `json:"basis"`
+	Text          string `json:"text"`
+	Basis         string `json:"basis"`
+	ChunkID       string `json:"chunk_id"`
+	EvidenceQuote string `json:"evidence_quote"`
+	Verified      bool   `json:"verified"`
 }
 
 // Citation 是一条已通过两级验证的引用。

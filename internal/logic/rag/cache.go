@@ -22,11 +22,33 @@ import (
 
 const cacheKeyPrefix = "rag:cache:"
 
+// cachePayloadVersion 是**结果生成契约**的版本号，只影响指纹，不影响请求契约。
+//
+// 为什么需要它：指纹原本只覆盖"档案内容"，于是"同一份档案、代码已升级"会命中
+// 升级前缓存的旧 payload。实测踩过两次：
+//
+//  1. 2026-10-22 给 `Suggestion` 补上 chunk_id/evidence_quote/verified 之后，
+//     MBTI 两份档案仍然命中旧缓存，库里存的建议依旧只有 {text, basis}，
+//     验收脚本报 suggestion_pass_rate=0，看起来像修复没生效。
+//  2. 同一天改 `strength_band()` 之后（因子负分不再写成"偏向"），旧缓存继续
+//     发"正常范围 + 明显偏向"的自相矛盾文本。
+//
+// 缓存 TTL 是 30 天，靠过期自愈太久，所以：**凡是会改变生成结果的东西变了就 +1**，
+// 包括 `Stored()` 的字段集合、`_SYSTEM_PROMPT`、`strength_band` 一类措辞规则。
+// 旧 key 不会被删除，只是再也不会被读到（30 天后自然过期）。
+const cachePayloadVersion = 3
+
 // cacheFingerprint 计算请求指纹。
 //
 // 用结构体而不是 map 来序列化：Go 的 map 键序在 JSON 里是稳定的（encoding/json
 // 会对 map 键排序），但字段集合容易漏改；结构体则会在编译期暴露漏字段。
 func cacheFingerprint(req *EnhanceRequest) (string, error) {
+	return fingerprintWithPayloadVersion(req, cachePayloadVersion)
+}
+
+// fingerprintWithPayloadVersion 是 cacheFingerprint 的实现，payload 版本作为参数
+// 传入只是为了让测试能证明「版本变了，key 一定跟着变」——否则这条规则只能靠人记。
+func fingerprintWithPayloadVersion(req *EnhanceRequest, payloadVersion int) (string, error) {
 	if req == nil {
 		return "", nil
 	}
@@ -48,10 +70,14 @@ func cacheFingerprint(req *EnhanceRequest) (string, error) {
 		Measures      []measureFP `json:"m"`
 		// needs_referral 由 buildFlags 折进 Flags，不单独占字段。
 		Flags []string `json:"f,omitempty"`
+		// Payload 是**落库结构**的版本，与请求契约无关：字段集合变了就 +1，
+		// 否则旧缓存会把旧形状的结果继续发出去（见 cachePayloadVersion 注释）。
+		Payload int `json:"p"`
 	}{
 		SchemaVersion: req.SchemaVersion,
 		TestCode:      req.Test.Code,
 		Flags:         req.Flags,
+		Payload:       payloadVersion,
 	}
 
 	for _, m := range req.Measures {

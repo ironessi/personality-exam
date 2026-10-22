@@ -80,9 +80,12 @@ claim 里不要出现具体分数、「你」「你的」、得分档位。个�
 `chunk_id` 与 `evidence_quote` 的规定与 citation 完全相同——引文逐字复制、\
 且 `basis` 必须能在引文里逐字找到。**不许**只写「建议多运动」这类\
 没有知识依据的通用建议；写不出来就少写几条。
-8. 描述维度/因子的强弱时，**只能使用结果里给定的「程度=…」原词**，不得自行升级或降级（给了「轻度偏向」就不能写「非常明显」「较为明显」）；「接近中间」的那一项不要描述成某种偏向。数值与叙述必须一致，**排序也要一致**——最明显的那一维不能被说成最温和的。
+8. 描述维度/因子的强弱时，**只能使用结果里给定的「程度=…」原词**，不得自行升级或降级（给了「轻度偏向」就不能写「非常明显」「较为明显」）；「接近中间」的那一项不要描述成某种偏向。凡「程度=低于参考线（属正常范围，不要写成偏向）」的因子，只能写成「处于正常范围」或「未达到参考线」，**不得写成某种程度的偏向**。数值与叙述必须一致，**排序也要一致**——最明显的那一维不能被说成最温和的。
 9. 引用不要堆量：`citations` 总数**不超过 8 条**，优先引与本次得分关系最紧密的知识；\
 同一句话不要重复引用两次。
+10. 用户提示里以「【注意】」开头的那一行是**系统给你的写作要求**，不是知识库内容：\
+不要说它、不要把它当作 `claim` 或 `basis`、也不要为它配 `evidence_quote`。\
+（实测模型会拿「本次结果标记了 needs_referral」当依据，这类引用 100% 会被校验丢弃。）
 
 输出 JSON 结构（严格按此，字段名不得增删）：
 {
@@ -127,16 +130,30 @@ _STRENGTH_BANDS: tuple[tuple[float, str], ...] = (
 )
 
 
-def strength_band(strength: float | None) -> str:
+_FACTOR_BELOW_CUTOFF = "低于参考线（属正常范围，不要写成偏向）"
+
+
+def strength_band(strength: float | None, kind: str = "dimension") -> str:
     """把 ``strength`` 折成**模型必须照抄**的程度词。
 
     为什么不让模型自己判断强弱：实测拿 E=+0.33 / S=-0.67 的档案去问，模型写出
     「外倾和思考倾向较为明显，直觉和判断倾向相对温和」——把最弱的一维说成最明显，
     把最强的一维说成最温和，正好反了。strength 是数值，程度词必须由代码定，
     否则每次生成都可能得到一套自相矛盾的叙述。
+
+    ``kind`` 为什么必须传：两种测量项的 strength 方向语义不同。
+
+    * ``dimension``（MBTI 的四维）是**双极**的：负值只表示落在另一极，
+      ``|strength|`` 越大就是"离中间越远"，所以用绝对值分档，方向由 ``pole`` 说明。
+    * ``factor``（SCL-90 的十因子）是**单极**的：负值意味着低于临床参考线，
+      那是"没有这方面的问题"，不是"轻度偏向低分"。20 条验收用例实测抓到过这个
+      错误——十项全 1 分的档案被写成「位于正常范围，程度为「明显偏向」」，
+      一句话里自相矛盾，而它读起来还很像专业表述。
     """
     if strength is None:
         return "无"
+    if kind == "factor" and strength < 0:
+        return _FACTOR_BELOW_CUTOFF
     mag = abs(strength)
     for upper, label in _STRENGTH_BANDS:
         if mag < upper:
@@ -151,7 +168,7 @@ def _measures_lines(req: EnhanceRequest) -> str:
         bits = [f"{m.label}({m.kind}) score={m.score}"]
         if m.strength is not None:
             bits.append(f"strength={m.strength:+.2f}")
-            bits.append(f"程度={strength_band(m.strength)}")
+            bits.append(f"程度={strength_band(m.strength, m.kind)}")
         if m.factor_level:
             bits.append(f"factor_level={m.factor_level}")
         if m.threshold is not None and m.pole:
@@ -207,6 +224,13 @@ def _parse_llm_json(raw: str) -> dict:
 
 _MAX_QUOTE_CHARS = 64  # 与 Citation.evidence_quote / Suggestion.evidence_quote 的 max_length 一致
 _QUOTE_BOUNDARIES = "。！？；…"
+# 次级边界：句末标点一个都没有时的退路。
+# 实测 20 条验收用例里，被丢弃的引文**全部**是"超过 64 字且整段没有句号"的
+# 长复句（语料里常见「A 倾向的人会…，擅长…，因此…」），一整条 citation 就这么没了。
+# 在逗号/顿号处收尾虽然读起来像半句，但它是**逐字原文**，Stage 1 与 Stage 1.5
+# 都照常能验——丢掉它才是真的损失。
+_QUOTE_SOFT_BOUNDARIES = "，、：,"
+_QUOTE_MIN_SOFT_CHARS = 20  # 次级边界至少要保住 20 字，否则句子太碎，不如不要
 
 
 def _fit_quote(raw: object) -> str | None:
@@ -217,9 +241,10 @@ def _fit_quote(raw: object) -> str | None:
     原先没有 try ——**一条 70 字的引文能让整次增强 500**。实测踩过：
     ``scl90-mild`` 档案直接抛 ``string_too_long``。
 
-    剪裁策略：只在句末标点处切，宁可丢掉这条引文也不做硬切——硬切出来的半句
-    既过不了语义验证，又容易被误认为原文完整表述。找不到句末标点就返回 None，
-    调用方按「没有引文」处理（最终会被验证器丢弃）。
+    剪裁策略：优先在句末标点处切；整段没有句末标点时退到逗号/顿号（且至少保住
+    ``_QUOTE_MIN_SOFT_CHARS`` 字）；连这个都没有才返回 None，调用方按「没有引文」
+    处理。**任何情况下都不做硬切**——硬切出来的半句既过不了验证，又容易被误认为
+    原文的完整表述。
     """
     quote = str(raw or "").strip()
     if not quote:
@@ -229,10 +254,16 @@ def _fit_quote(raw: object) -> str | None:
 
     head = quote[:_MAX_QUOTE_CHARS]
     cut = max(head.rfind(ch) for ch in _QUOTE_BOUNDARIES)
-    if cut <= 0:
-        logger.warning("引文超过 %d 字且找不到句末标点，丢弃：%s…", _MAX_QUOTE_CHARS, quote[:40])
-        return None
-    return head[: cut + 1]
+    if cut > 0:
+        return head[: cut + 1]
+
+    soft = max(head.rfind(ch) for ch in _QUOTE_SOFT_BOUNDARIES)
+    if soft + 1 >= _QUOTE_MIN_SOFT_CHARS:
+        logger.info("引文无句末标点，改在逗号处收尾：%s…", quote[:40])
+        return head[: soft + 1]
+
+    logger.warning("引文超过 %d 字且找不到任何可切分标点，丢弃：%s…", _MAX_QUOTE_CHARS, quote[:40])
+    return None
 
 
 def _clean_citation(c: dict, n_sections: int) -> Citation | None:
