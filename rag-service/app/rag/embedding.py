@@ -132,6 +132,58 @@ class EmbeddingModel:
         )
         return first_s
 
+    def warmup_lengths(self, lo: int = 6, hi: int = 30) -> tuple[float, int]:
+        """把「**每个 token 长度**的第一次前向」这笔一次性开销提前烧掉。
+
+        为什么需要它（2026-10-22 实测，macOS CPU，`bge-small-zh-v1.5`）：
+
+        * 同一进程里，某个 token 长度的**第一次** `encode` 要 200~2400 ms，
+          之后同一长度只要 16~20 ms。这不是「第一次调用」的冷启动——它按长度
+          重复发生：30 条 fixture 顺序跑一遍，中位数 30 ms，P95 却是 **837 ms**，
+          尖峰散落在第 4、7、10、16… 条，与 query 内容无关，只与长度是否首次出现有关。
+        * 关掉 oneDNN（`torch.backends.mkldnn.enabled=False`）、把 torch 线程数
+          压到 1、按 namespace 预热检索栈，**都没有消除**这些尖峰（实测仍然 P95 849ms）。
+        * 逐长度暖机之后：单条 `encode` **P95 19 ms、最大 26 ms**，尖峰全部消失。
+
+        代价是启动多花十几秒（实测 4..32 共 29 个长度 15.5 s，6..30 略少），换来的是
+        「第一个问某类问题的用户不额外等 0.8 s」。生产上这笔账是值的：
+        ADR-0007 的同步快路径只有 3 s，一次 0.8 s 的尖峰就吃掉四分之一。
+
+        覆盖范围取 6..30 token：比这更短的是兜底 query，比这更长的在实际
+        `build_queries()` 产物里不存在（最长的是「…维度 高分与低分分别意味着什么」）。
+        真出现更长的 query，只会让那一个请求多付一次冷启动，不会错。
+
+        返回 ``(耗时秒数, 实际覆盖的长度个数)``。
+        """
+        self.load()
+        assert self._model is not None
+
+        tokenizer = self._model.tokenizer
+        t0 = time.perf_counter()
+        covered = 0
+        for target in range(max(lo, 1), hi + 1):
+            text = "字"
+            # 逐字加长直到 token 数达到 target；BGE 的中文是字级切分，
+            # 一般加 target-2 个字就够，这里留余量并加硬上限防死循环。
+            for _ in range(target + 8):
+                length = int(tokenizer([text], return_tensors="pt")["input_ids"].shape[1])
+                if length >= target:
+                    break
+                text += "字"
+            with self._lock:
+                self._model.encode([text], normalize_embeddings=True)
+            covered += 1
+
+        elapsed = time.perf_counter() - t0
+        logger.info(
+            "按长度暖机完成 | token 长度 %d..%d 共 %d 个 | 耗时=%.3fs",
+            lo,
+            hi,
+            covered,
+            elapsed,
+        )
+        return elapsed, covered
+
     # ── 推理 ────────────────────────────────────────────────
 
     def encode(self, texts: Iterable[str]) -> list[list[float]]:

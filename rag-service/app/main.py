@@ -47,6 +47,13 @@ async def lifespan(app: FastAPI):
 
             model = get_embedding_model()
             first_encode_s = model.warmup()
+            # 3b. 按 token 长度暖机 —— 这是**另一个**一次性开销，`warmup()` 烧不掉它。
+            #     实测每个新长度的首次前向要 200~2400ms，30 条 fixture 顺序跑会把
+            #     检索 P95 从 19ms 抬到 837ms（中位数仍是 30ms，所以只有 P95 能看出问题）。
+            #     详见 `app/rag/embedding.py::warmup_lengths` 的实测记录。
+            lengths_s, lengths_n = model.warmup_lengths(s.warmup_length_lo, s.warmup_length_hi)
+            app.state.warmup_lengths_s = round(lengths_s, 3)
+            app.state.warmup_lengths_n = lengths_n
             app.state.embedding_loaded = model.loaded
             app.state.warmup_first_encode_s = round(first_encode_s, 3)
         except Exception as exc:  # noqa: BLE001
@@ -56,6 +63,8 @@ async def lifespan(app: FastAPI):
     else:
         app.state.embedding_loaded = False
         app.state.warmup_first_encode_s = None
+        app.state.warmup_lengths_s = None
+        app.state.warmup_lengths_n = 0
         logger.warning("WARMUP_ON_STARTUP=false —— 第一个请求会承担 3~4s 首次前向开销")
 
     # 4. 检索栈预热 —— 三笔独立的一次性开销，少预热任何一笔都会落在第一个真实请求上

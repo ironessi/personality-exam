@@ -137,6 +137,12 @@ class Settings(BaseSettings):
     # 必须保持 True：首次 encode 有 3~4s 开销（见 rag/embedding.py 顶部说明）
     warmup_on_startup: bool = True
 
+    # 按 token 长度暖机的区间（含端点）。每个长度的**首次** encode 要 200~2400ms，
+    # 30 条 fixture 顺序跑会把检索 P95 从 35ms 抬到 837ms（详见 embedding.py 的实测记录）。
+    # 代价是启动多花十几秒。设成 lo > hi 可关闭（不推荐，只在明确知道请求长度分布时用）。
+    warmup_length_lo: int = Field(default=6, ge=0, le=512)
+    warmup_length_hi: int = Field(default=30, ge=0, le=512)
+
     # ── 派生 ────────────────────────────────────────────────
     @property
     def data_raw_dir(self) -> Path:
