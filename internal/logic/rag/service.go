@@ -67,17 +67,35 @@ func Prepare(
 	return &Pending{TestType: testType, Request: req, cfg: cfg}
 }
 
-// TryInline 在 3 秒硬期限内尝试同步增强（ADR-0007 的快路径）。
+// TryInline 尝试在提交线程里就拿到增强结果（ADR-0007 的快路径）。
 //
-// 返回 nil 表示"期限内没拿到结果"，调用方应当把请求交给 Enqueue 异步兜底。
-// 这里区分不了"超时"和"服务真的挂了"，也不需要区分——两者的处理完全一样。
+// 返回 nil 表示"这一次没有现成的结果"，调用方应当把请求交给 Enqueue 异步兜底。
+//
+// 两条出口，顺序不能换：
+//
+//  1. **缓存命中**：同一份答案档案重复提交（用户刷新、重测同题、灰度验收）不该
+//     再花三五秒和一次 token。实测命中时提交接口 39ms 就能带 rag 返回。
+//
+//  2. **缓存未命中**：只有 `rag.syncOnMiss = true` 才会真的外呼一次。
+//     默认 **false**，因为 2026-10-22 的 20 条验收给出了反证：`sync_hit = 0`，
+//     而且日志里每个用例都有**两条** verify 记录——第一条来自这里的同步尝试
+//     （3 秒期限到、Go 放弃，但 Python 侧的生成不会因此停下），第二条来自 worker
+//     重跑。结果是每次提交付两倍 token，用户还在提交页白等 3 秒。
+//
+//     DeepSeek 生成一份解读要 4~10 秒，3 秒期限几乎必然到期；把期限调大到能覆盖
+//     生成时间，就等于要求用户在提交页等十秒。**入队才是正常路径，同步只是缓存
+//     命中时的赠品**。
 func (p *Pending) TryInline(ctx context.Context) map[string]interface{} {
-	// 先看缓存：同一份答案档案重复提交（用户刷新、重测同题、灰度验收）
-	// 不应该再花一次三四秒和一次 token。缓存命中是真正的"快路径"，
-	// 比任何超时调参都有效。
+	// 出口 1：缓存。
 	if cached := p.TryCache(ctx); cached != nil {
 		g.Log().Infof(ctx, "RAG: 测评 %d 命中缓存，跳过外呼", p.TestType)
 		return cached
+	}
+
+	// 出口 2：未命中缓存且配置为直接入队 → 立刻返回，让调用方 Enqueue。
+	if !p.cfg.SyncOnMiss {
+		g.Log().Infof(ctx, "RAG: 测评 %d 未命中缓存，直接入队（syncOnMiss=false）", p.TestType)
+		return nil
 	}
 
 	deadline, cancel := context.WithTimeout(ctx, p.cfg.SyncDeadline())

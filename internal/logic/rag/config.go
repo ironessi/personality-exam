@@ -26,6 +26,11 @@ type Config struct {
 	MaxSuggestions      int
 	TestTypes           []int
 
+	// SyncOnMiss 决定"缓存未命中时要不要在提交线程里试一次外呼"（rag.syncOnMiss）。
+	// 默认 false：实测 3 秒期限几乎必然到期，同步尝试只会换来双倍 token 与
+	// 3 秒白等；缓存命中时仍走同步（39ms）。见 service.go::TryInline 的注释。
+	SyncOnMiss bool
+
 	// 异步兜底用的 Redis（ADR-0007）。本机独立 db=5，与业务缓存隔离。
 	RedisAddress string
 	RedisDB      int
@@ -62,6 +67,7 @@ func LoadConfig(ctx context.Context) Config {
 		MaxSuggestions:      g.Cfg().MustGet(ctx, "rag.maxSuggestions", defaultMaxSuggestions).Int(),
 	}
 	cfg.TestTypes = g.Cfg().MustGet(ctx, "rag.testTypes").Ints()
+	cfg.SyncOnMiss = g.Cfg().MustGet(ctx, "rag.syncOnMiss", false).Bool()
 	cfg.RedisAddress = g.Cfg().MustGet(ctx, "rag.redis.address", defaultRedisAddress).String()
 	cfg.RedisDB = g.Cfg().MustGet(ctx, "rag.redis.db", defaultRedisDB).Int()
 	cfg.RedisPass = g.Cfg().MustGet(ctx, "rag.redis.pass", "").String()

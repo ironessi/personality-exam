@@ -129,6 +129,8 @@ def build_cases() -> list[Case]:
         _mbti_case("mbti-06", "ENTJ（与历史用例同档，验缓存）", {"E": 15, "S": 6, "T": 11, "J": 9}),
         _mbti_case("mbti-07", "INFP 极低分", {"E": 4, "S": 4, "T": 3, "J": 3}),
         _mbti_case("mbti-08", "四维均低于阈值", {"E": 10, "S": 10, "T": 6, "J": 6}),
+        _mbti_case("mbti-09", "四维均略高于阈值", {"E": 14, "S": 14, "T": 9, "J": 9}),
+        _mbti_case("mbti-10", "反向极端（I/N/F/P 全高）", {"E": 3, "S": 3, "T": 2, "J": 2}),
         _scl90_case("scl-01", "仅躯体化偏高", {"somatization": 5}),
         _scl90_case("scl-02", "抑郁偏高", {"depression": 4}),
         _scl90_case("scl-03", "焦虑偏高", {"anxiety": 5}),
@@ -141,6 +143,11 @@ def build_cases() -> list[Case]:
         _scl90_case("scl-10", "全题 3 分（整体偏高）", {f: 3 for f in SCL90_FACTORS}),
         _scl90_case("scl-11", "全题 2 分（整体轻度）", {f: 2 for f in SCL90_FACTORS}),
         _scl90_case("scl-12", "危机信号（题 58 答 3）", {"crisis": 3}),
+        # 以下 3 条是把评审样本凑到 ≥100 节用的"组合档案"：
+        # 单因子偏高只考"能不能讲清一个构念"，多因子同时偏高才考"会不会把几件事混成一件"。
+        _scl90_case("scl-13", "抑郁+焦虑双高", {"depression": 4, "anxiety": 4}),
+        _scl90_case("scl-14", "全题 4 分（整体明显偏高）", {f: 4 for f in SCL90_FACTORS}),
+        _scl90_case("scl-15", "强迫+人际+敌对三高", {"obsessive": 5, "interpersonal": 4, "hostility": 4}),
     ]
     return cases
 

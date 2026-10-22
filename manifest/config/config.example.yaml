@@ -44,3 +44,21 @@ sms:
   endpoint: "dypnsapi.aliyuncs.com"
   signName: "YOUR_SMS_SIGN_NAME"
   templateCode: "YOUR_SMS_TEMPLATE_CODE"
+
+# RAG 增强（旁路；关掉不影响测评本身）。详见 doc/RAG增强系统开发文档.md §6.1
+rag:
+  enable:         false          # 总开关；没有显式打开绝不外呼
+  baseUrl:        "http://127.0.0.1:8001"
+  apiKey:         ""             # 对外暴露 rag-service 时必填
+  syncDeadlineSeconds: 3         # 同步尝试的硬期限（仅 syncOnMiss=true 时生效）
+  syncOnMiss:     false          # 缓存未命中就直接入队：实测 3 秒期限必然到期，
+                                 # 同步尝试只会额外付一次 token
+  timeoutSeconds: 30             # 只作用于后台 worker 的 HTTP 调用
+  maxSuggestions: 5
+  testTypes:      [13, 1]        # 灰度白名单（MBTI=13、SCL-90=1）
+  queueKey:       "rag:queue"
+  cacheTTL:       2592000        # 30 天
+  redis:                         # 独立 db，与业务缓存隔离
+    address: "127.0.0.1:6379"
+    db:      5
+    pass:    ""

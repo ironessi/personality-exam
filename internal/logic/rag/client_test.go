@@ -27,6 +27,9 @@ func newTestPending(t *testing.T, baseURL string) *Pending {
 			APIKey:              "test-key",
 			SyncDeadlineSeconds: 3,
 			TestTypes:           []int{consts.MBTI},
+			// 这些用例测的是"外呼这一段"，所以显式打开同步尝试。
+			// 生产默认是 false（未命中缓存就直接入队，见 service.go::TryInline）。
+			SyncOnMiss: true,
 		},
 	}
 }
@@ -204,6 +207,37 @@ func TestTryInlineHonoursSyncDeadline(t *testing.T) {
 	}
 	if elapsed > 1500*time.Millisecond {
 		t.Errorf("耗时 %s，超过 1s 期限太多（期限没生效？）", elapsed)
+	}
+}
+
+// TestTryInlineSkipsCallWhenSyncOnMissDisabled：默认配置下，缓存未命中就**不外呼**。
+//
+// 2026-10-22 的 20 条验收给出的反证：`sync_hit=0`，且每条用例都有两条 verify
+// （同步尝试 + worker 重跑），等于每次提交付两倍 token，用户还白等 3 秒。
+// 所以默认 syncOnMiss=false：提交线程只做"查缓存"这一件事。
+func TestTryInlineSkipsCallWhenSyncOnMissDisabled(t *testing.T) {
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		_, _ = w.Write([]byte(cannedResponse))
+	}))
+	defer srv.Close()
+
+	p := newTestPending(t, srv.URL)
+	p.cfg.SyncOnMiss = false
+
+	start := time.Now()
+	rag := p.TryInline(context.Background())
+	elapsed := time.Since(start)
+
+	if rag != nil {
+		t.Fatal("未命中缓存且 syncOnMiss=false 时应返回 nil（交给 Enqueue）")
+	}
+	if calls != 0 {
+		t.Errorf("不应外呼，实际调用 %d 次", calls)
+	}
+	if elapsed > 300*time.Millisecond {
+		t.Errorf("耗时 %s，提交线程不该在缓存未命中时等待", elapsed)
 	}
 }
 

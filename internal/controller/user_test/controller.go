@@ -491,7 +491,8 @@ func (c *Controller) SubmitTestResult(ctx context.Context, req *SubmitTestResult
 	ensureResultFields(resultMap, answerRecords)
 
 	// ============ RAG 增强（旁路，失败绝不影响主流程）============
-	// ADR-0007：同步最多等 3 秒，超时转异步由 worker 回填。
+	// 正常路径是「入队 → worker 用 30 秒超时跑完 → 回填」；只有缓存命中
+	// （默认）或显式打开 rag.syncOnMiss 时，才会在提交线程里外呼。
 	// 这里**不能**返回错误——增强是加分项，不是测评结果的一部分。
 	pendingRAG := rag.Prepare(ctx, int(req.TestId), req.TestName, resultMap)
 	ragAttached := false
